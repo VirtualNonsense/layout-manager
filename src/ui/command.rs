@@ -108,62 +108,31 @@ fn contains(rect: Rect, x: u16, y: u16) -> bool {
         && y < rect.y.saturating_add(rect.height)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SidebarCommand {
-    SelectionUp,
-    SelectionDown,
-    Click(PointerEvent),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ContentCommand {
-    CounterInc,
-    CounterDec,
-    Click(PointerEvent),
-}
-
+/// Abstract, hardware-agnostic command sent to components.
+///
+/// Components never see keycodes. The `AppComponent` wrapper layer (the `on()` method on the
+/// `Component` trait) is responsible for translating raw input events into `ComponentCommand` values.
+/// This means two apps can wire the same component to completely different keys.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ComponentCommand {
-    Sidebar(SidebarCommand),
-    Content(ContentCommand),
+    /// Navigate in a direction (list up/down, text cursor left/right, ...).
+    Move(Direction2D),
+    /// Confirm / submit the current selection.
+    Submit,
+    /// A pointer interaction (click, scroll, drag).
+    Pointer(PointerEvent),
+    /// Increment a numeric value.
+    Increment,
+    /// Decrement a numeric value.
+    Decrement,
 }
 
-impl ComponentCommand {
-    pub fn target_component(&self) -> Option<&'static str> {
-        match self {
-            ComponentCommand::Sidebar(SidebarCommand::Click(_)) => Some("menu"),
-            ComponentCommand::Content(ContentCommand::Click(_)) => Some("content"),
-            _ => None,
-        }
-    }
-}
-
-impl TryFrom<ComponentCommand> for SidebarCommand {
-    type Error = ();
-
-    fn try_from(value: ComponentCommand) -> Result<Self, Self::Error> {
-        match value {
-            ComponentCommand::Sidebar(command) => Ok(command),
-            _ => Err(()),
-        }
-    }
-}
-
-impl TryFrom<ComponentCommand> for ContentCommand {
-    type Error = ();
-
-    fn try_from(value: ComponentCommand) -> Result<Self, Self::Error> {
-        match value {
-            ComponentCommand::Content(command) => Ok(command),
-            _ => Err(()),
-        }
-    }
-}
-
+/// Top-level command produced by the input layer and dispatched by `Ui`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     App(AppCommand),
     Focus(FocusCommand),
+    /// Route an abstract `ComponentCommand` to the currently focused (or pointer-targeted) component.
     Component(ComponentCommand),
 }
 

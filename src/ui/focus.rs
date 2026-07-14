@@ -18,7 +18,7 @@ pub struct FocusManager {
 impl FocusManager {
     pub fn new(initial: ComponentId) -> Self {
         Self {
-            current: Some(initial.into()),
+            current: Some(initial),
             regions: Vec::new(),
         }
     }
@@ -28,7 +28,6 @@ impl FocusManager {
     }
 
     pub fn set_current(&mut self, focus: ComponentId) {
-        let focus = focus.into();
         if self.regions.iter().any(|region| region.focus == focus) {
             self.current = Some(focus);
         }
@@ -56,7 +55,7 @@ impl FocusManager {
                 .as_ref()
                 .is_some_and(|current| !self.regions.iter().any(|region| &region.focus == current))
         {
-            self.current = self.regions.first().map(|region| region.focus.clone());
+            self.current = self.regions.first().map(|region| region.focus);
         }
     }
 
@@ -79,7 +78,7 @@ impl FocusManager {
             .unwrap_or(0);
         let len = self.regions.len() as isize;
         let next = (index as isize + delta).rem_euclid(len) as usize;
-        self.current = Some(self.regions[next].focus.clone());
+        self.current = Some(self.regions[next].focus);
     }
 
     pub fn move_geometric(&mut self, direction: Direction2D) {
@@ -102,7 +101,7 @@ impl FocusManager {
         else {
             return;
         };
-        self.current = Some(next.focus.clone());
+        self.current = Some(next.focus);
     }
 }
 

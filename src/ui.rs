@@ -8,10 +8,11 @@ pub mod layout;
 use crate::ui::builder::UiBuilder;
 use crate::ui::command::{Command, ComponentCommand, FocusCommand, PointerEvent};
 use crate::ui::components::{
-    Component, ComponentRegistry, ContentComponent, EventOutcome, RenderCtx, SidebarComponent,
+    Component, ComponentKind, ComponentRegistry, ContentComponent, EventOutcome, RenderContext,
+    SidebarComponent,
 };
 use crate::ui::focus::{FocusManager, FocusRegion};
-use crate::ui::input::{InputContext, InputManager};
+use crate::ui::input::InputManager;
 use crate::ui::layout::{LaidOutRegion, LayoutSpec};
 use ratatui::{
     Frame,
@@ -19,7 +20,7 @@ use ratatui::{
 };
 
 pub use crate::ui::command::{AppCommand, Direction2D, UiAction};
-pub use crate::ui::layout::{ComponentId, FocusId};
+pub use crate::ui::layout::ComponentId;
 
 pub struct Ui {
     layout: LayoutSpec,
@@ -76,7 +77,7 @@ impl Ui {
 
         for region in regions {
             let focused = self.focus.current() == Some(region.focus);
-            let ctx = RenderCtx {
+            let ctx = RenderContext {
                 focused,
                 focus_id: &region.focus,
             };
@@ -86,12 +87,7 @@ impl Ui {
     }
 
     pub fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> Vec<UiAction> {
-        let context = InputContext {
-            focused_component: self.focus.focused_component(),
-            hovered_component: None,
-        };
-
-        let Some(command) = self.input.resolve_key(key, &context) else {
+        let Some(command) = self.input.resolve_key(key, self.get_focused_kind()) else {
             return vec![];
         };
 
@@ -105,16 +101,13 @@ impl Ui {
         if let Some(region) = hit.as_ref()
             && PointerEvent::is_focus_event(mouse.kind)
         {
-            self.focus.set_current(region.focus.clone());
+            self.focus.set_current(region.focus);
         }
 
         let pointer = PointerEvent::from_mouse_event(mouse, hit.as_ref().map(|r| r.rect));
-        let context = InputContext {
-            focused_component: self.focus.focused_component(),
-            hovered_component: hit.as_ref().map(|region| &region.component),
-        };
+        let hovered = self.get_hovered_kind(hit);
 
-        let Some(command) = self.input.resolve_pointer(pointer, &context) else {
+        let Some(command) = self.input.resolve_pointer(pointer, hovered) else {
             return vec![];
         };
 
@@ -136,36 +129,47 @@ impl Ui {
                 self.focus.previous();
                 vec![]
             }
-            Command::Component(cmd) => self.dispatch_to_focused_or_targeted_component(cmd),
+            Command::Component(cmd) => self.dispatch_to_focused_component(cmd),
         }
     }
 
-    fn dispatch_to_focused_or_targeted_component(
-        &mut self,
-        command: ComponentCommand,
-    ) -> Vec<UiAction> {
-        // Mouse-originated component commands carry their target component. Key-originated commands
-        // do not, so they are routed to the currently focused component.
-        let component_id = command
-            .target_component()
-            .map(str::to_owned)
-            .or_else(|| self.focus.focused_component().map(str::to_owned));
-
-        let Some(component_id) = component_id else {
+    /// Route a `ComponentCommand` to the currently focused component.
+    ///
+    /// Mouse-originated `ComponentCommand::Pointer` events are routed to the hovered component via
+    /// `resolve_pointer` in `handle_mouse_event` — by the time we get here, the focused
+    /// component is already correct (click-to-focus happened above).
+    fn dispatch_to_focused_component(&mut self, cmd: ComponentCommand) -> Vec<UiAction> {
+        let Some(id) = self.focus.focused_component() else {
             return vec![];
         };
 
-        match self.components.handle_command(&component_id, command) {
+        match self.components.on(&id, cmd) {
             EventOutcome::Ignored => vec![],
             EventOutcome::Consumed(actions) => actions,
         }
     }
 
+    fn get_focused_kind(&self) -> Option<ComponentKind> {
+        self.focus.focused_component().map(|id| {
+            self.components
+                .get_kind(&id)
+                .expect("focused component must be registered")
+        })
+    }
+
+    fn get_hovered_kind(&self, hit: Option<FocusRegion>) -> Option<ComponentKind> {
+        hit.as_ref().map(|region| {
+            self.components
+                .get_kind(&region.component)
+                .expect("hovered component must be registered")
+        })
+    }
+
     fn update_focus_regions(&mut self, regions: &[LaidOutRegion]) {
         self.focus
             .set_regions(regions.iter().map(|region| FocusRegion {
-                focus: region.focus.clone(),
-                component: region.component.clone(),
+                focus: region.focus,
+                component: region.component,
                 rect: region.rect,
             }));
     }

@@ -1,5 +1,4 @@
 use crate::ui::Ui;
-use crate::ui::command::ComponentCommand;
 use crate::ui::components::{Component, ComponentRegistry};
 use crate::ui::focus::FocusManager;
 use crate::ui::input::InputManager;
@@ -13,14 +12,36 @@ pub struct UiBuilder {
     components: ComponentRegistry,
     initial_focus: Option<ComponentId>,
     input: Option<InputManager>,
+    /// Pending binding registrations: (kind, key_bindings, pointer_bindings).
+    /// Collected during `component()` calls, applied in `build()` once the InputManager exists.
+    pending_bindings: Vec<PendingBindings>,
+}
+
+struct PendingBindings {
+    kind: &'static str,
+    keys: &'static [(
+        crossterm::event::KeyCode,
+        crossterm::event::KeyModifiers,
+        crate::ui::command::ComponentCommand,
+    )],
+    pointers: &'static [(
+        crate::ui::command::PointerGesture,
+        crate::ui::input::PointerBinding,
+    )],
 }
 
 impl UiBuilder {
+    /// Register a component. Its keybindings are collected here and applied to the
+    /// `InputManager` during `build()`.
     pub fn component<C>(mut self, component: C) -> Self
     where
         C: Component + 'static,
-        C::Command: TryFrom<ComponentCommand, Error = ()>,
     {
+        self.pending_bindings.push(PendingBindings {
+            kind: C::kind(),
+            keys: C::key_bindings(),
+            pointers: C::pointer_bindings(),
+        });
         self.components.insert(component);
         self
     }
@@ -29,10 +50,12 @@ impl UiBuilder {
         self.layout = Some(layout);
         self
     }
+
     pub fn initial_focus(mut self, focus: ComponentId) -> Self {
         self.initial_focus = Some(focus);
         self
     }
+
     pub fn input(mut self, input: InputManager) -> Self {
         self.input = Some(input);
         self
@@ -40,7 +63,13 @@ impl UiBuilder {
 
     pub fn build(self) -> Result<Ui> {
         let layout = self.layout.ok_or_else(|| eyre!("UI layout is missing"))?;
-        let input = self.input.unwrap_or_else(InputManager::default_keymap);
+        let mut input = self.input.unwrap_or_else(InputManager::default_keymap);
+
+        // Register every component's self-declared bindings into the input manager.
+        for pb in &self.pending_bindings {
+            input.register_component_bindings(pb.kind, pb.keys, pb.pointers);
+        }
+
         let mut leaves = Vec::new();
         layout.collect_leaves(&mut leaves);
         if leaves.is_empty() {
@@ -52,14 +81,14 @@ impl UiBuilder {
             if !self.components.contains(component) {
                 return Err(eyre!("layout references missing component '{component}'"));
             }
-            if !focus_ids.insert((*focus).clone()) {
+            if !focus_ids.insert(*(*focus)) {
                 return Err(eyre!("duplicate focus id '{focus}'"));
             }
         }
 
         let initial_focus = self
             .initial_focus
-            .or_else(|| leaves.first().map(|(_, focus)| (*focus).clone()))
+            .or_else(|| leaves.first().map(|(_, focus)| *(*focus)))
             .ok_or_else(|| eyre!("initial focus could not be derived"))?;
         if !focus_ids.contains(&initial_focus) {
             return Err(eyre!(
