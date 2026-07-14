@@ -61,8 +61,8 @@ impl LayoutSpec {
     fn compute_into(&self, area: Rect, out: &mut Vec<LaidOutRegion>) {
         match self {
             LayoutSpec::Leaf { component, focus } => out.push(LaidOutRegion {
-                component: component.clone(),
-                focus: focus.clone(),
+                component: *component,
+                focus: *focus,
                 rect: area,
             }),
             LayoutSpec::Split {

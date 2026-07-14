@@ -1,7 +1,9 @@
 use crate::ui::command::{
-    ComponentCommand, ContentCommand, PointerEvent, SidebarCommand, UiAction,
+    ComponentCommand, Direction2D, PointerButton, PointerEvent, PointerGesture, UiAction,
 };
+use crate::ui::input::PointerBinding;
 use crate::ui::layout::ComponentId;
+use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -11,7 +13,7 @@ use ratatui::{
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub struct RenderCtx<'a> {
+pub struct RenderContext<'a> {
     pub focused: bool,
     pub focus_id: &'a ComponentId,
 }
@@ -21,41 +23,58 @@ pub enum EventOutcome {
     Consumed(Vec<UiAction>),
 }
 
-/// Strongly typed component trait.
-///
-/// Each component defines its own command type. The component implementation never needs to match
-/// on app-wide command namespaces and cannot accidentally handle another component's command.
-pub trait Component {
-    type Command: Copy + 'static;
+pub type ComponentKind = &'static str;
 
+/// Strongly typed, self-describing component trait.
+///
+/// Each component defines its own `ComponentCommand`-to-action mapping in `on()` and declares its own
+/// keybindings via `key_bindings()` / `pointer_bindings()`. No central command enum exists —
+/// adding a new component requires only this file; nothing else needs to be touched.
+pub trait Component {
     fn id(&self) -> ComponentId;
-    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderCtx<'_>);
-    fn handle_command(&mut self, command: Self::Command) -> EventOutcome;
-    fn component_kind(&self) -> &str;
+    fn kind() -> ComponentKind
+    where
+        Self: Sized;
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderContext<'_>);
+
+    /// Handle an abstract `ComponentCommand`. Components interpret only the `ComponentCommand` variants they understand
+    /// and return `EventOutcome::Ignored` for everything else.
+    fn on(&mut self, cmd: ComponentCommand) -> EventOutcome;
+
+    /// Key bindings declared by this component type.
+    /// These are registered into the `InputManager` when the component is mounted.
+    fn key_bindings() -> &'static [(KeyCode, KeyModifiers, ComponentCommand)]
+    where
+        Self: Sized;
+
+    /// Pointer bindings declared by this component type.
+    fn pointer_bindings() -> &'static [(PointerGesture, PointerBinding)]
+    where
+        Self: Sized;
 }
 
 /// Internal object-safe adapter used by the registry.
 ///
 /// This stays private so app code works with the typed [`Component`] trait.
+/// The adapter receives the same abstract `ComponentCommand` that was produced by the input layer —
+/// no downcasting or type-erased Any needed: `ComponentCommand` itself is the lingua franca.
 trait ComponentAdapter {
-    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderCtx<'_>);
-    fn handle_component_command(&mut self, command: ComponentCommand) -> EventOutcome;
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderContext<'_>);
+    fn on(&mut self, cmd: ComponentCommand) -> EventOutcome;
+    fn get_kind(&self) -> ComponentKind;
 }
 
-impl<T> ComponentAdapter for T
-where
-    T: Component + 'static,
-    T::Command: TryFrom<ComponentCommand, Error = ()>,
-{
-    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderCtx<'_>) {
+impl<T: Component + 'static> ComponentAdapter for T {
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderContext<'_>) {
         Component::render(self, frame, area, ctx);
     }
 
-    fn handle_component_command(&mut self, command: ComponentCommand) -> EventOutcome {
-        let Ok(command) = T::Command::try_from(command) else {
-            return EventOutcome::Ignored;
-        };
-        Component::handle_command(self, command)
+    fn on(&mut self, cmd: ComponentCommand) -> EventOutcome {
+        Component::on(self, cmd)
+    }
+
+    fn get_kind(&self) -> ComponentKind {
+        T::kind()
     }
 }
 
@@ -68,37 +87,55 @@ impl ComponentRegistry {
     pub fn insert<C>(&mut self, component: C)
     where
         C: Component + 'static,
-        C::Command: TryFrom<ComponentCommand, Error = ()>,
     {
-        let id = Component::id(&component).to_owned();
+        let id = component.id();
         self.components.insert(id, Box::new(component));
     }
 
     pub fn contains(&self, id: &ComponentId) -> bool {
         self.components.contains_key(id)
     }
-    pub fn ids(&self) -> impl Iterator<Item = ComponentId> {
-        self.components.keys().cloned()
+
+    pub fn ids(&self) -> impl Iterator<Item = ComponentId> + '_ {
+        self.components.keys().copied()
     }
 
-    pub fn render(&mut self, id: &ComponentId, frame: &mut Frame, area: Rect, ctx: RenderCtx<'_>) {
+    pub fn render(
+        &mut self,
+        id: &ComponentId,
+        frame: &mut Frame,
+        area: Rect,
+        ctx: RenderContext<'_>,
+    ) {
         if let Some(component) = self.components.get_mut(id) {
             component.render(frame, area, ctx);
         }
     }
 
-    pub fn handle_command(&mut self, id: &ComponentId, command: ComponentCommand) -> EventOutcome {
+    pub fn on(&mut self, id: &ComponentId, cmd: ComponentCommand) -> EventOutcome {
         self.components
             .get_mut(id)
-            .map(|component| component.handle_component_command(command))
+            .map(|component| component.on(cmd))
             .unwrap_or(EventOutcome::Ignored)
     }
+
+    pub fn get_kind(&self, id: &ComponentId) -> Option<ComponentKind> {
+        self.components.get(id).map(|c| c.get_kind())
+    }
 }
+
+// ─── SidebarComponent ────────────────────────────────────────────────────────
 
 pub struct SidebarComponent {
     id: ComponentId,
     items: Vec<String>,
     state: ListState,
+}
+
+impl Default for SidebarComponent {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SidebarComponent {
@@ -124,7 +161,6 @@ impl SidebarComponent {
     }
 
     fn click(&mut self, event: PointerEvent) {
-        // local_y includes the border; item 0 starts roughly at y=1 inside the block.
         if let Some(local_y) = event.local_y {
             let index = local_y.saturating_sub(1) as usize;
             if index < self.items.len() {
@@ -135,13 +171,15 @@ impl SidebarComponent {
 }
 
 impl Component for SidebarComponent {
-    type Command = SidebarCommand;
-
     fn id(&self) -> ComponentId {
         self.id
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderCtx<'_>) {
+    fn kind() -> ComponentKind {
+        "sidebar"
+    }
+
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderContext<'_>) {
         let block = focused_block("Menu", ctx.focused);
         let items = self.items.iter().map(|item| ListItem::new(item.as_str()));
         let list = List::new(items)
@@ -155,24 +193,61 @@ impl Component for SidebarComponent {
         frame.render_stateful_widget(list, area, &mut self.state);
     }
 
-    fn handle_command(&mut self, command: SidebarCommand) -> EventOutcome {
-        match command {
-            SidebarCommand::SelectionUp => self.select_previous(),
-            SidebarCommand::SelectionDown => self.select_next(),
-            SidebarCommand::Click(event) => self.click(event),
+    fn on(&mut self, cmd: ComponentCommand) -> EventOutcome {
+        match cmd {
+            ComponentCommand::Move(Direction2D::Up) => self.select_previous(),
+            ComponentCommand::Move(Direction2D::Down) => self.select_next(),
+            ComponentCommand::Pointer(event) => self.click(event),
+            _ => return EventOutcome::Ignored,
         }
         EventOutcome::Consumed(vec![])
     }
 
-    fn component_kind(&self) -> &str {
-        "SidebarComponent"
+    fn key_bindings() -> &'static [(KeyCode, KeyModifiers, ComponentCommand)] {
+        &[
+            (
+                KeyCode::Up,
+                KeyModifiers::NONE,
+                ComponentCommand::Move(Direction2D::Up),
+            ),
+            (
+                KeyCode::Down,
+                KeyModifiers::NONE,
+                ComponentCommand::Move(Direction2D::Down),
+            ),
+        ]
+    }
+
+    fn pointer_bindings() -> &'static [(PointerGesture, PointerBinding)] {
+        &[
+            (
+                PointerGesture::Down(PointerButton::Left),
+                PointerBinding::WithEvent,
+            ),
+            (
+                PointerGesture::ScrollUp,
+                PointerBinding::Fixed(ComponentCommand::Move(Direction2D::Up)),
+            ),
+            (
+                PointerGesture::ScrollDown,
+                PointerBinding::Fixed(ComponentCommand::Move(Direction2D::Down)),
+            ),
+        ]
     }
 }
+
+// ─── ContentComponent ────────────────────────────────────────────────────────
 
 pub struct ContentComponent {
     id: ComponentId,
     counter: i64,
     last_click: Option<PointerEvent>,
+}
+
+impl Default for ContentComponent {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ContentComponent {
@@ -186,13 +261,15 @@ impl ContentComponent {
 }
 
 impl Component for ContentComponent {
-    type Command = ContentCommand;
-
     fn id(&self) -> ComponentId {
         self.id
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderCtx<'_>) {
+    fn kind() -> ComponentKind {
+        "content"
+    }
+
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderContext<'_>) {
         let click_text = self
             .last_click
             .map(|event| {
@@ -225,26 +302,51 @@ impl Component for ContentComponent {
         frame.render_widget(paragraph, area);
     }
 
-    fn handle_command(&mut self, command: ContentCommand) -> EventOutcome {
-        match command {
-            ContentCommand::CounterInc => self.counter += 1,
-            ContentCommand::CounterDec => self.counter -= 1,
-            ContentCommand::Click(event) => {
+    fn on(&mut self, cmd: ComponentCommand) -> EventOutcome {
+        match cmd {
+            ComponentCommand::Increment => self.counter += 1,
+            ComponentCommand::Decrement => self.counter -= 1,
+            ComponentCommand::Pointer(event) => {
                 match event.gesture {
-                    super::command::PointerGesture::ScrollUp => self.counter += 1,
-                    super::command::PointerGesture::ScrollDown => self.counter -= 1,
+                    PointerGesture::ScrollUp => self.counter += 1,
+                    PointerGesture::ScrollDown => self.counter -= 1,
                     _ => {}
                 }
-                self.last_click = Some(event)
+                self.last_click = Some(event);
             }
+            _ => return EventOutcome::Ignored,
         }
         EventOutcome::Consumed(vec![])
     }
 
-    fn component_kind(&self) -> &str {
-        "ContentComponent"
+    fn key_bindings() -> &'static [(KeyCode, KeyModifiers, ComponentCommand)] {
+        &[
+            (
+                KeyCode::Left,
+                KeyModifiers::NONE,
+                ComponentCommand::Decrement,
+            ),
+            (
+                KeyCode::Right,
+                KeyModifiers::NONE,
+                ComponentCommand::Increment,
+            ),
+        ]
+    }
+
+    fn pointer_bindings() -> &'static [(PointerGesture, PointerBinding)] {
+        &[
+            (
+                PointerGesture::Down(PointerButton::Left),
+                PointerBinding::WithEvent,
+            ),
+            (PointerGesture::ScrollUp, PointerBinding::WithEvent),
+            (PointerGesture::ScrollDown, PointerBinding::WithEvent),
+        ]
     }
 }
+
+// ─── Shared helpers ──────────────────────────────────────────────────────────
 
 fn focused_block(title: &'static str, focused: bool) -> Block<'static> {
     let border_style = if focused {

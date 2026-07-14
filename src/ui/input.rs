@@ -1,17 +1,14 @@
-use crate::ui::{
-    ComponentId,
-    command::{
-        AppCommand, Command, ComponentCommand, ContentCommand, Direction2D, FocusCommand,
-        PointerButton, PointerEvent, PointerGesture, SidebarCommand,
-    },
+use crate::ui::command::{
+    AppCommand, Command, ComponentCommand, Direction2D, FocusCommand, PointerEvent, PointerGesture,
 };
+use crate::ui::components::ComponentKind;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct KeyStroke {
-    code: KeyCode,
-    modifiers: KeyModifiers,
+    pub code: KeyCode,
+    pub modifiers: KeyModifiers,
 }
 
 impl From<KeyEvent> for KeyStroke {
@@ -23,24 +20,28 @@ impl From<KeyEvent> for KeyStroke {
     }
 }
 
-pub struct InputContext {
-    pub focused_component: Option<ComponentId>,
-    pub hovered_component: Option<ComponentId>,
+/// Describes how a pointer gesture maps to a `ComponentCommand` for a component.
+///
+/// - `Fixed(cmd)`: always produces this `ComponentCommand`, regardless of pointer position.
+/// - `WithEvent`:  produces `ComponentCommand::Pointer(event)`, passing full position data to the component.
+#[derive(Clone, Copy, Debug)]
+pub enum PointerBinding {
+    Fixed(ComponentCommand),
+    WithEvent,
 }
-
-type PointerCommandFactory = fn(PointerEvent) -> Command;
-
-pub struct ComponentPath {}
 
 #[derive(Default)]
 pub struct InputManager {
     key_global: HashMap<KeyStroke, Command>,
-    key_component: HashMap<ComponentId, HashMap<KeyStroke, Command>>,
-    pointer_global: HashMap<PointerGesture, PointerCommandFactory>,
-    pointer_component: HashMap<ComponentId, HashMap<PointerGesture, PointerCommandFactory>>,
+    key_component: HashMap<ComponentKind, HashMap<KeyStroke, Command>>,
+    pointer_global: HashMap<PointerGesture, PointerBinding>,
+    pointer_component: HashMap<ComponentKind, HashMap<PointerGesture, PointerBinding>>,
 }
 
 impl InputManager {
+    /// Global bindings only — focus, app commands.
+    /// Component-specific bindings are registered via `register_component_bindings()`,
+    /// called by the builder when a component is mounted.
     pub fn default_keymap() -> Self {
         let mut input = Self::default();
 
@@ -92,63 +93,37 @@ impl InputManager {
             Command::Focus(FocusCommand::Move(Direction2D::Right)),
         );
 
-        input.bind_key_component(
-            "menu",
-            KeyCode::Up,
-            KeyModifiers::NONE,
-            Command::Component(ComponentCommand::Sidebar(SidebarCommand::SelectionUp)),
-        );
-        input.bind_key_component(
-            "menu",
-            KeyCode::Down,
-            KeyModifiers::NONE,
-            Command::Component(ComponentCommand::Sidebar(SidebarCommand::SelectionDown)),
-        );
-        input.bind_key_component(
-            "content",
-            KeyCode::Left,
-            KeyModifiers::NONE,
-            Command::Component(ComponentCommand::Content(ContentCommand::CounterDec)),
-        );
-        input.bind_key_component(
-            "content",
-            KeyCode::Right,
-            KeyModifiers::NONE,
-            Command::Component(ComponentCommand::Content(ContentCommand::CounterInc)),
-        );
-
-        input.bind_pointer_component("content", PointerGesture::ScrollUp, |event| {
-            Command::Component(ComponentCommand::Content(ContentCommand::Click(event)))
-        });
-        input.bind_pointer_component("content", PointerGesture::ScrollDown, |event| {
-            Command::Component(ComponentCommand::Content(ContentCommand::Click(event)))
-        });
-
-        input.bind_pointer_component("menu", PointerGesture::Down(PointerButton::Left), |event| {
-            Command::Component(ComponentCommand::Sidebar(SidebarCommand::Click(event)))
-        });
-        input.bind_pointer_component("menu", PointerGesture::ScrollUp, |_| {
-            Command::Component(ComponentCommand::Sidebar(SidebarCommand::SelectionUp))
-        });
-        input.bind_pointer_component("menu", PointerGesture::ScrollDown, |_| {
-            Command::Component(ComponentCommand::Sidebar(SidebarCommand::SelectionDown))
-        });
-        input.bind_pointer_component(
-            "content",
-            PointerGesture::Down(PointerButton::Left),
-            |event| Command::Component(ComponentCommand::Content(ContentCommand::Click(event))),
-        );
-
         input
     }
 
-    pub fn resolve_key(&self, key: KeyEvent, context: &InputContext<'_>) -> Option<Command> {
+    /// Register a component's self-declared key and pointer bindings.
+    ///
+    /// Called by `UiBuilder::component()` for every mounted component.
+    /// This is the only place where component kind strings and binding tables meet —
+    /// the component itself provides both.
+    pub fn register_component_bindings(
+        &mut self,
+        kind: ComponentKind,
+        key_bindings: &[(KeyCode, KeyModifiers, ComponentCommand)],
+        pointer_bindings: &[(PointerGesture, PointerBinding)],
+    ) {
+        for (code, modifiers, cmd) in key_bindings {
+            let cmd = *cmd;
+            self.bind_key_component(kind, *code, *modifiers, Command::Component(cmd));
+        }
+
+        for (gesture, binding) in pointer_bindings {
+            self.bind_pointer_component(kind, *gesture, *binding);
+        }
+    }
+
+    pub fn resolve_key(&self, key: KeyEvent, focused: Option<ComponentKind>) -> Option<Command> {
         let key = KeyStroke::from(key);
 
-        if let Some(component_id) = context.focused_component
+        if let Some(kind) = focused
             && let Some(command) = self
                 .key_component
-                .get(component_id)
+                .get(kind)
                 .and_then(|bindings| bindings.get(&key))
         {
             return Some(*command);
@@ -160,20 +135,22 @@ impl InputManager {
     pub fn resolve_pointer(
         &self,
         pointer: PointerEvent,
-        context: &InputContext<'_>,
+        hovered: Option<ComponentKind>,
     ) -> Option<Command> {
-        if let Some(component_id) = context.hovered_component
-            && let Some(factory) = self
-                .pointer_component
-                .get(component_id)
+        let binding = if let Some(kind) = hovered {
+            self.pointer_component
+                .get(kind)
                 .and_then(|bindings| bindings.get(&pointer.gesture))
-        {
-            return Some(factory(pointer));
-        }
+                .or_else(|| self.pointer_global.get(&pointer.gesture))
+        } else {
+            self.pointer_global.get(&pointer.gesture)
+        }?;
 
-        self.pointer_global
-            .get(&pointer.gesture)
-            .map(|factory| factory(pointer))
+        let cmd = match binding {
+            PointerBinding::Fixed(cmd) => Command::Component(*cmd),
+            PointerBinding::WithEvent => Command::Component(ComponentCommand::Pointer(pointer)),
+        };
+        Some(cmd)
     }
 
     pub fn bind_key_global(&mut self, code: KeyCode, modifiers: KeyModifiers, command: Command) {
@@ -183,30 +160,30 @@ impl InputManager {
 
     pub fn bind_key_component(
         &mut self,
-        component: ComponentId,
+        component: ComponentKind,
         code: KeyCode,
         modifiers: KeyModifiers,
         command: Command,
     ) {
         self.key_component
-            .entry(component.into())
+            .entry(component)
             .or_default()
             .insert(KeyStroke { code, modifiers }, command);
     }
 
-    pub fn bind_pointer_global(&mut self, gesture: PointerGesture, factory: PointerCommandFactory) {
-        self.pointer_global.insert(gesture, factory);
+    pub fn bind_pointer_global(&mut self, gesture: PointerGesture, binding: PointerBinding) {
+        self.pointer_global.insert(gesture, binding);
     }
 
     pub fn bind_pointer_component(
         &mut self,
-        component: ComponentId,
+        component: ComponentKind,
         gesture: PointerGesture,
-        factory: PointerCommandFactory,
+        binding: PointerBinding,
     ) {
         self.pointer_component
-            .entry(component.into())
+            .entry(component)
             .or_default()
-            .insert(gesture, factory);
+            .insert(gesture, binding);
     }
 }
