@@ -1,7 +1,7 @@
 use crate::ui::command::{
     AppCommand, Command, ComponentCommand, Direction2D, FocusCommand, PointerEvent, PointerGesture,
 };
-use crate::ui::components::ComponentKind;
+use crate::ui::component::ComponentKind;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
 
