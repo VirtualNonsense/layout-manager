@@ -1,13 +1,13 @@
 pub mod builder;
 pub mod command;
-pub mod components;
+pub mod component;
 pub mod focus;
 pub mod input;
 pub mod layout;
 
 use crate::ui::builder::UiBuilder;
 use crate::ui::command::{Command, ComponentCommand, FocusCommand, PointerEvent};
-use crate::ui::components::{
+use crate::ui::component::{
     Component, ComponentKind, ComponentRegistry, ContentComponent, EventOutcome, RenderContext,
     SidebarComponent,
 };

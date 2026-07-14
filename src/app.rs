@@ -40,6 +40,7 @@ impl App {
                 }
                 Event::Crossterm(_) => {}
                 Event::App(AppEvent::Quit) => self.quit(),
+                Event::ComponentEvent(_component_event) => todo!(),
             }
         }
 

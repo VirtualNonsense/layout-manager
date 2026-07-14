@@ -1,5 +1,5 @@
 use crate::ui::Ui;
-use crate::ui::components::{Component, ComponentRegistry};
+use crate::ui::component::{Component, ComponentRegistry};
 use crate::ui::focus::FocusManager;
 use crate::ui::input::InputManager;
 use crate::ui::layout::{ComponentId, LayoutSpec};
