@@ -6,7 +6,8 @@ pub mod input;
 pub mod layout;
 
 use crate::ui::builder::UiBuilder;
-use crate::ui::command::{Command, ComponentCommand, FocusCommand, PointerEvent};
+use crate::ui::command::{Command, FocusCommand, PointerEvent};
+use crate::ui::component::component_event::Event;
 use crate::ui::component::{
     Component, ComponentKind, ComponentRegistry, ContentComponent, EventOutcome, RenderContext,
     SidebarComponent,
@@ -129,7 +130,7 @@ impl Ui {
                 self.focus.previous();
                 vec![]
             }
-            Command::Component(cmd) => self.dispatch_to_focused_component(cmd),
+            Command::Component(cmd) => self.dispatch_to_focused_component(cmd.as_ref()),
         }
     }
 
@@ -138,7 +139,7 @@ impl Ui {
     /// Mouse-originated `ComponentCommand::Pointer` events are routed to the hovered component via
     /// `resolve_pointer` in `handle_mouse_event` — by the time we get here, the focused
     /// component is already correct (click-to-focus happened above).
-    fn dispatch_to_focused_component(&mut self, cmd: ComponentCommand) -> Vec<UiAction> {
+    fn dispatch_to_focused_component(&mut self, cmd: &dyn Event) -> Vec<UiAction> {
         let Some(id) = self.focus.focused_component() else {
             return vec![];
         };

@@ -1,6 +1,8 @@
 use crossterm::event::{MouseButton as CrosstermMouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 
+use crate::ui::component::component_event::Event;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Direction2D {
     Up,
@@ -108,32 +110,13 @@ fn contains(rect: Rect, x: u16, y: u16) -> bool {
         && y < rect.y.saturating_add(rect.height)
 }
 
-/// Abstract, hardware-agnostic command sent to components.
-///
-/// Components never see keycodes. The `AppComponent` wrapper layer (the `on()` method on the
-/// `Component` trait) is responsible for translating raw input events into `ComponentCommand` values.
-/// This means two apps can wire the same component to completely different keys.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ComponentCommand {
-    /// Navigate in a direction (list up/down, text cursor left/right, ...).
-    Move(Direction2D),
-    /// Confirm / submit the current selection.
-    Submit,
-    /// A pointer interaction (click, scroll, drag).
-    Pointer(PointerEvent),
-    /// Increment a numeric value.
-    Increment,
-    /// Decrement a numeric value.
-    Decrement,
-}
-
 /// Top-level command produced by the input layer and dispatched by `Ui`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Command {
     App(AppCommand),
     Focus(FocusCommand),
     /// Route an abstract `ComponentCommand` to the currently focused (or pointer-targeted) component.
-    Component(ComponentCommand),
+    Component(Box<dyn Event>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

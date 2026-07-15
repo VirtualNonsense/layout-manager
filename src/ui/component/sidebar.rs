@@ -1,4 +1,3 @@
-use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -8,10 +7,12 @@ use ratatui::{
 use uuid::Uuid;
 
 use crate::ui::{
-    ComponentId, Direction2D,
-    command::{ComponentCommand, PointerButton, PointerEvent, PointerGesture},
-    component::{Component, ComponentKind, EventOutcome, RenderContext},
-    input::PointerBinding,
+    ComponentId,
+    command::{PointerEvent, PointerGesture},
+    component::{
+        Component, ComponentKind, EventOutcome, RenderContext,
+        component_event::{Event, MouseEvent, MoveEvent},
+    },
 };
 
 pub struct SidebarComponent {
@@ -48,7 +49,7 @@ impl SidebarComponent {
         self.state.select(Some(selected.saturating_sub(1)));
     }
 
-    fn click(&mut self, event: PointerEvent) {
+    fn click(&mut self, event: &PointerEvent) {
         if let Some(local_y) = event.local_y {
             let index = local_y.saturating_sub(1) as usize;
             if index < self.items.len() {
@@ -81,45 +82,26 @@ impl Component for SidebarComponent {
         frame.render_stateful_widget(list, area, &mut self.state);
     }
 
-    fn on(&mut self, cmd: ComponentCommand) -> EventOutcome {
-        match cmd {
-            ComponentCommand::Move(Direction2D::Up) => self.select_previous(),
-            ComponentCommand::Move(Direction2D::Down) => self.select_next(),
-            ComponentCommand::Pointer(event) => self.click(event),
-            _ => return EventOutcome::Ignored,
+    fn on(&mut self, event: &dyn Event) -> EventOutcome {
+        if let Some(MoveEvent(direction)) = event.downcast_ref::<MoveEvent>() {
+            match direction {
+                crate::ui::Direction2D::Up => self.select_previous(),
+                crate::ui::Direction2D::Down => self.select_next(),
+                crate::ui::Direction2D::Left | crate::ui::Direction2D::Right => {
+                    return EventOutcome::Ignored;
+                }
+            }
+        }
+
+        if let Some(MouseEvent(pointer)) = event.downcast_ref::<MouseEvent>() {
+            match pointer.gesture {
+                PointerGesture::ScrollUp => self.select_previous(),
+                PointerGesture::ScrollDown => self.select_next(),
+                PointerGesture::Down(_) => self.click(pointer),
+
+                _ => return EventOutcome::Ignored,
+            }
         }
         EventOutcome::Consumed(vec![])
-    }
-
-    fn key_bindings() -> &'static [(KeyCode, KeyModifiers, ComponentCommand)] {
-        &[
-            (
-                KeyCode::Up,
-                KeyModifiers::NONE,
-                ComponentCommand::Move(Direction2D::Up),
-            ),
-            (
-                KeyCode::Down,
-                KeyModifiers::NONE,
-                ComponentCommand::Move(Direction2D::Down),
-            ),
-        ]
-    }
-
-    fn pointer_bindings() -> &'static [(PointerGesture, PointerBinding)] {
-        &[
-            (
-                PointerGesture::Down(PointerButton::Left),
-                PointerBinding::WithEvent,
-            ),
-            (
-                PointerGesture::ScrollUp,
-                PointerBinding::Fixed(ComponentCommand::Move(Direction2D::Up)),
-            ),
-            (
-                PointerGesture::ScrollDown,
-                PointerBinding::Fixed(ComponentCommand::Move(Direction2D::Down)),
-            ),
-        ]
     }
 }
