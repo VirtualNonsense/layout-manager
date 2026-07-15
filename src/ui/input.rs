@@ -1,7 +1,8 @@
 use crate::ui::command::{
-    AppCommand, Command, ComponentCommand, Direction2D, FocusCommand, PointerEvent, PointerGesture,
+    AppCommand, Command, Direction2D, FocusCommand, PointerEvent, PointerGesture,
 };
-use crate::ui::component::ComponentKind;
+use crate::ui::component::component_event::{Event, MouseEvent, MoveEvent};
+use crate::ui::component::{Component, ComponentKind, ContentComponent, SidebarComponent};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
 
@@ -24,9 +25,9 @@ impl From<KeyEvent> for KeyStroke {
 ///
 /// - `Fixed(cmd)`: always produces this `ComponentCommand`, regardless of pointer position.
 /// - `WithEvent`:  produces `ComponentCommand::Pointer(event)`, passing full position data to the component.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum PointerBinding {
-    Fixed(ComponentCommand),
+    Fixed(Box<dyn Event>),
     WithEvent,
 }
 
@@ -92,7 +93,50 @@ impl InputManager {
             KeyModifiers::ALT,
             Command::Focus(FocusCommand::Move(Direction2D::Right)),
         );
-
+        input.bind_pointer_component(
+            ContentComponent::kind(),
+            PointerGesture::ScrollUp,
+            PointerBinding::WithEvent,
+        );
+        input.bind_pointer_component(
+            ContentComponent::kind(),
+            PointerGesture::ScrollDown,
+            PointerBinding::WithEvent,
+        );
+        input.bind_key_component(
+            ContentComponent::kind(),
+            KeyCode::Up,
+            KeyModifiers::empty(),
+            Command::Component(Box::new(MoveEvent(Direction2D::Up))),
+        );
+        input.bind_key_component(
+            ContentComponent::kind(),
+            KeyCode::Down,
+            KeyModifiers::empty(),
+            Command::Component(Box::new(MoveEvent(Direction2D::Down))),
+        );
+        input.bind_pointer_component(
+            SidebarComponent::kind(),
+            PointerGesture::ScrollUp,
+            PointerBinding::WithEvent,
+        );
+        input.bind_pointer_component(
+            SidebarComponent::kind(),
+            PointerGesture::ScrollDown,
+            PointerBinding::WithEvent,
+        );
+        input.bind_key_component(
+            SidebarComponent::kind(),
+            KeyCode::Up,
+            KeyModifiers::empty(),
+            Command::Component(Box::new(MoveEvent(Direction2D::Up))),
+        );
+        input.bind_key_component(
+            SidebarComponent::kind(),
+            KeyCode::Down,
+            KeyModifiers::empty(),
+            Command::Component(Box::new(MoveEvent(Direction2D::Down))),
+        );
         input
     }
 
@@ -104,16 +148,16 @@ impl InputManager {
     pub fn register_component_bindings(
         &mut self,
         kind: ComponentKind,
-        key_bindings: &[(KeyCode, KeyModifiers, ComponentCommand)],
+        key_bindings: &[(KeyCode, KeyModifiers, Command)],
         pointer_bindings: &[(PointerGesture, PointerBinding)],
     ) {
         for (code, modifiers, cmd) in key_bindings {
-            let cmd = *cmd;
-            self.bind_key_component(kind, *code, *modifiers, Command::Component(cmd));
+            let cmd = cmd.clone();
+            self.bind_key_component(kind, *code, *modifiers, cmd);
         }
 
         for (gesture, binding) in pointer_bindings {
-            self.bind_pointer_component(kind, *gesture, *binding);
+            self.bind_pointer_component(kind, *gesture, binding.clone());
         }
     }
 
@@ -126,10 +170,10 @@ impl InputManager {
                 .get(kind)
                 .and_then(|bindings| bindings.get(&key))
         {
-            return Some(*command);
+            return Some(command.clone());
         }
 
-        self.key_global.get(&key).copied()
+        self.key_global.get(&key).cloned()
     }
 
     pub fn resolve_pointer(
@@ -147,8 +191,8 @@ impl InputManager {
         }?;
 
         let cmd = match binding {
-            PointerBinding::Fixed(cmd) => Command::Component(*cmd),
-            PointerBinding::WithEvent => Command::Component(ComponentCommand::Pointer(pointer)),
+            PointerBinding::Fixed(cmd) => Command::Component(cmd.clone()),
+            PointerBinding::WithEvent => Command::Component(Box::new(MouseEvent(pointer))),
         };
         Some(cmd)
     }

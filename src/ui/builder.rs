@@ -12,22 +12,6 @@ pub struct UiBuilder {
     components: ComponentRegistry,
     initial_focus: Option<ComponentId>,
     input: Option<InputManager>,
-    /// Pending binding registrations: (kind, key_bindings, pointer_bindings).
-    /// Collected during `component()` calls, applied in `build()` once the InputManager exists.
-    pending_bindings: Vec<PendingBindings>,
-}
-
-struct PendingBindings {
-    kind: &'static str,
-    keys: &'static [(
-        crossterm::event::KeyCode,
-        crossterm::event::KeyModifiers,
-        crate::ui::command::ComponentCommand,
-    )],
-    pointers: &'static [(
-        crate::ui::command::PointerGesture,
-        crate::ui::input::PointerBinding,
-    )],
 }
 
 impl UiBuilder {
@@ -37,15 +21,9 @@ impl UiBuilder {
     where
         C: Component + 'static,
     {
-        self.pending_bindings.push(PendingBindings {
-            kind: C::kind(),
-            keys: C::key_bindings(),
-            pointers: C::pointer_bindings(),
-        });
         self.components.insert(component);
         self
     }
-
     pub fn layout(mut self, layout: LayoutSpec) -> Self {
         self.layout = Some(layout);
         self
@@ -63,12 +41,7 @@ impl UiBuilder {
 
     pub fn build(self) -> Result<Ui> {
         let layout = self.layout.ok_or_else(|| eyre!("UI layout is missing"))?;
-        let mut input = self.input.unwrap_or_else(InputManager::default_keymap);
-
-        // Register every component's self-declared bindings into the input manager.
-        for pb in &self.pending_bindings {
-            input.register_component_bindings(pb.kind, pb.keys, pb.pointers);
-        }
+        let input = self.input.unwrap_or_else(InputManager::default_keymap);
 
         let mut leaves = Vec::new();
         layout.collect_leaves(&mut leaves);

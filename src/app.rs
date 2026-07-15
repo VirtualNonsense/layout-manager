@@ -1,6 +1,6 @@
-use crate::event::{AppEvent, Event, EventHandler};
+use crate::event::{EventContainer, EventHandler};
 use crate::ui::{AppCommand, Ui, UiAction};
-use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind};
+use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind, MouseEvent};
 use ratatui::{DefaultTerminal, Frame};
 
 pub struct App {
@@ -29,18 +29,18 @@ impl App {
             terminal.draw(|frame| self.render(frame))?;
 
             match self.events.next().await? {
-                Event::Tick => self.tick(),
-                Event::Crossterm(CrosstermEvent::Key(key_event))
+                EventContainer::Tick => self.tick(),
+                EventContainer::Quit => self.quit(),
+                EventContainer::Crossterm(CrosstermEvent::Key(key_event))
                     if key_event.kind == KeyEventKind::Press =>
                 {
                     self.handle_key_event(key_event)?;
                 }
-                Event::Crossterm(CrosstermEvent::Mouse(mouse_event)) => {
+                EventContainer::Crossterm(CrosstermEvent::Mouse(mouse_event)) => {
                     self.handle_mouse_event(mouse_event)?;
                 }
-                Event::Crossterm(_) => {}
-                Event::App(AppEvent::Quit) => self.quit(),
-                Event::ComponentEvent(_component_event) => todo!(),
+                EventContainer::Crossterm(_) => {}
+                EventContainer::ComponentEvent(_component_event) => todo!(),
             }
         }
 
@@ -57,10 +57,7 @@ impl App {
         Ok(())
     }
 
-    pub fn handle_mouse_event(
-        &mut self,
-        mouse_event: crossterm::event::MouseEvent,
-    ) -> color_eyre::Result<()> {
+    pub fn handle_mouse_event(&mut self, mouse_event: MouseEvent) -> color_eyre::Result<()> {
         let actions = self.ui.handle_mouse_event(mouse_event);
         self.apply_actions(actions);
         Ok(())
@@ -69,7 +66,7 @@ impl App {
     fn apply_actions(&mut self, actions: Vec<UiAction>) {
         for action in actions {
             match action {
-                UiAction::App(AppCommand::Quit) => self.events.send(AppEvent::Quit),
+                UiAction::App(AppCommand::Quit) => self.events.send(EventContainer::Quit),
             }
         }
     }

@@ -1,7 +1,6 @@
-use crate::ui::command::{ComponentCommand, PointerGesture, UiAction};
-use crate::ui::input::PointerBinding;
+use crate::ui::command::UiAction;
+use crate::ui::component::component_event::Event;
 use crate::ui::layout::ComponentId;
-use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -10,6 +9,7 @@ use ratatui::{
 };
 use std::collections::HashMap;
 
+pub mod component_event;
 pub mod content;
 pub mod sidebar;
 pub use content::ContentComponent;
@@ -41,18 +41,7 @@ pub trait Component {
 
     /// Handle an abstract `ComponentCommand`. Components interpret only the `ComponentCommand` variants they understand
     /// and return `EventOutcome::Ignored` for everything else.
-    fn on(&mut self, cmd: ComponentCommand) -> EventOutcome;
-
-    /// Key bindings declared by this component type.
-    /// These are registered into the `InputManager` when the component is mounted.
-    fn key_bindings() -> &'static [(KeyCode, KeyModifiers, ComponentCommand)]
-    where
-        Self: Sized;
-
-    /// Pointer bindings declared by this component type.
-    fn pointer_bindings() -> &'static [(PointerGesture, PointerBinding)]
-    where
-        Self: Sized;
+    fn on(&mut self, event: &dyn Event) -> EventOutcome;
 }
 
 /// Internal object-safe adapter used by the registry.
@@ -62,7 +51,7 @@ pub trait Component {
 /// no downcasting or type-erased Any needed: `ComponentCommand` itself is the lingua franca.
 trait ComponentAdapter {
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderContext<'_>);
-    fn on(&mut self, cmd: ComponentCommand) -> EventOutcome;
+    fn on(&mut self, cmd: &dyn Event) -> EventOutcome;
     fn get_kind(&self) -> ComponentKind;
 }
 
@@ -71,8 +60,8 @@ impl<T: Component + 'static> ComponentAdapter for T {
         Component::render(self, frame, area, ctx);
     }
 
-    fn on(&mut self, cmd: ComponentCommand) -> EventOutcome {
-        Component::on(self, cmd)
+    fn on(&mut self, event: &dyn Event) -> EventOutcome {
+        Component::on(self, event)
     }
 
     fn get_kind(&self) -> ComponentKind {
@@ -114,10 +103,10 @@ impl ComponentRegistry {
         }
     }
 
-    pub fn on(&mut self, id: &ComponentId, cmd: ComponentCommand) -> EventOutcome {
+    pub fn on(&mut self, id: &ComponentId, event: &dyn Event) -> EventOutcome {
         self.components
             .get_mut(id)
-            .map(|component| component.on(cmd))
+            .map(|component| component.on(event))
             .unwrap_or(EventOutcome::Ignored)
     }
 

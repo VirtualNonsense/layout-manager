@@ -1,4 +1,3 @@
-use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -9,9 +8,11 @@ use uuid::Uuid;
 
 use crate::ui::{
     ComponentId,
-    command::{ComponentCommand, PointerButton, PointerEvent, PointerGesture},
-    component::{Component, ComponentKind, EventOutcome, RenderContext},
-    input::PointerBinding,
+    command::{PointerEvent, PointerGesture},
+    component::{
+        Component, ComponentKind, EventOutcome, RenderContext,
+        component_event::{Event, MouseEvent, MoveEvent},
+    },
 };
 
 pub struct ContentComponent {
@@ -78,46 +79,24 @@ impl Component for ContentComponent {
         frame.render_widget(paragraph, area);
     }
 
-    fn on(&mut self, cmd: ComponentCommand) -> EventOutcome {
-        match cmd {
-            ComponentCommand::Increment => self.counter += 1,
-            ComponentCommand::Decrement => self.counter -= 1,
-            ComponentCommand::Pointer(event) => {
-                match event.gesture {
-                    PointerGesture::ScrollUp => self.counter += 1,
-                    PointerGesture::ScrollDown => self.counter -= 1,
-                    _ => {}
+    fn on(&mut self, event: &dyn Event) -> EventOutcome {
+        if let Some(MoveEvent(direction)) = event.downcast_ref::<MoveEvent>() {
+            match direction {
+                crate::ui::Direction2D::Up => self.counter += 1,
+                crate::ui::Direction2D::Down => self.counter -= 1,
+                crate::ui::Direction2D::Left | crate::ui::Direction2D::Right => {
+                    return EventOutcome::Ignored;
                 }
-                self.last_click = Some(event);
             }
-            _ => return EventOutcome::Ignored,
+        }
+
+        if let Some(MouseEvent(pointer)) = event.downcast_ref::<MouseEvent>() {
+            match pointer.gesture {
+                PointerGesture::ScrollUp => self.counter += 1,
+                PointerGesture::ScrollDown => self.counter -= 1,
+                _ => return EventOutcome::Ignored,
+            }
         }
         EventOutcome::Consumed(vec![])
-    }
-
-    fn key_bindings() -> &'static [(KeyCode, KeyModifiers, ComponentCommand)] {
-        &[
-            (
-                KeyCode::Left,
-                KeyModifiers::NONE,
-                ComponentCommand::Decrement,
-            ),
-            (
-                KeyCode::Right,
-                KeyModifiers::NONE,
-                ComponentCommand::Increment,
-            ),
-        ]
-    }
-
-    fn pointer_bindings() -> &'static [(PointerGesture, PointerBinding)] {
-        &[
-            (
-                PointerGesture::Down(PointerButton::Left),
-                PointerBinding::WithEvent,
-            ),
-            (PointerGesture::ScrollUp, PointerBinding::WithEvent),
-            (PointerGesture::ScrollDown, PointerBinding::WithEvent),
-        ]
     }
 }
