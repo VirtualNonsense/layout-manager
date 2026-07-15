@@ -1,11 +1,21 @@
+//! Input binding and resolution.
+//!
+//! [`InputManager`] maintains two lookup tables — one for the whole application
+//! (global) and one per [`ComponentKind`] — for both key and pointer gestures.
+//! Resolution always tries the component-specific table first, then falls back
+//! to the global table.
+
 use crate::ui::command::{
-    AppCommand, Command, Direction2D, FocusCommand, PointerEvent, PointerGesture,
+    AppCommand, Command, Direction2D, FocusCommand, PointerBinding, PointerEvent, PointerGesture,
 };
-use crate::ui::component::component_event::{Event, MouseEvent, MoveEvent};
+use crate::ui::component::events::{MouseEvent, MoveEvent};
 use crate::ui::component::{Component, ComponentKind, ContentComponent, SidebarComponent};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
 
+/// A normalised key press: key code plus modifier mask.
+///
+/// Used as the map key in [`InputManager`]'s key binding tables.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct KeyStroke {
     pub code: KeyCode,
@@ -21,16 +31,14 @@ impl From<KeyEvent> for KeyStroke {
     }
 }
 
-/// Describes how a pointer gesture maps to a `ComponentCommand` for a component.
+/// Manages key and pointer bindings for the application.
 ///
-/// - `Fixed(cmd)`: always produces this `ComponentCommand`, regardless of pointer position.
-/// - `WithEvent`:  produces `ComponentCommand::Pointer(event)`, passing full position data to the component.
-#[derive(Clone, Debug)]
-pub enum PointerBinding {
-    Fixed(Box<dyn Event>),
-    WithEvent,
-}
-
+/// Bindings are split into two scopes:
+///
+/// - **Global** — active regardless of which component is focused / hovered.
+/// - **Per-component** — keyed by [`ComponentKind`] and checked before the
+///   global table, allowing components to shadow global bindings for their own
+///   keys (e.g. `↑`/`↓` for navigation inside a list).
 #[derive(Default)]
 pub struct InputManager {
     key_global: HashMap<KeyStroke, Command>,
@@ -40,9 +48,18 @@ pub struct InputManager {
 }
 
 impl InputManager {
-    /// Global bindings only — focus, app commands.
-    /// Component-specific bindings are registered via `register_component_bindings()`,
-    /// called by the builder when a component is mounted.
+    /// Build the default keymap used by the demo application.
+    ///
+    /// Registers global bindings for quit (`q`, `Esc`, `Ctrl-C`), cyclic
+    /// focus (`Tab` / `Shift-Tab`), and geometric focus (`Alt+Arrow`).
+    ///
+    /// Also registers component-specific bindings for `SidebarComponent` and
+    /// `ContentComponent` directly in this method.
+    ///
+    /// > **Note:** Component bindings are currently hard-coded here.
+    /// > [`register_component_bindings`](Self::register_component_bindings)
+    /// > exists as the intended future API for components to declare their own
+    /// > bindings, but it is not yet called automatically by the builder.
     pub fn default_keymap() -> Self {
         let mut input = Self::default();
 
@@ -140,11 +157,11 @@ impl InputManager {
         input
     }
 
-    /// Register a component's self-declared key and pointer bindings.
+    /// Register a batch of key and pointer bindings for a given component kind.
     ///
-    /// Called by `UiBuilder::component()` for every mounted component.
-    /// This is the only place where component kind strings and binding tables meet —
-    /// the component itself provides both.
+    /// This is the intended API for components to declare their own bindings.
+    /// It is not yet called automatically by [`UiBuilder`](crate::ui::builder::UiBuilder);
+    /// bindings must currently be added manually in [`default_keymap`](Self::default_keymap).
     pub fn register_component_bindings(
         &mut self,
         kind: ComponentKind,
@@ -161,6 +178,10 @@ impl InputManager {
         }
     }
 
+    /// Resolve a key event to a [`Command`].
+    ///
+    /// Checks the component-specific table for `focused` first; falls back to
+    /// the global table.  Returns `None` if the key is unbound.
     pub fn resolve_key(&self, key: KeyEvent, focused: Option<ComponentKind>) -> Option<Command> {
         let key = KeyStroke::from(key);
 
@@ -176,6 +197,14 @@ impl InputManager {
         self.key_global.get(&key).cloned()
     }
 
+    /// Resolve a pointer event to a [`Command`].
+    ///
+    /// Checks the component-specific table for `hovered` first (including a
+    /// fallback to the global table); returns `None` if the gesture is unbound.
+    ///
+    /// When a binding is [`PointerBinding::WithEvent`], the full
+    /// [`PointerEvent`] (including component-local coordinates) is wrapped in a
+    /// [`MouseEvent`] and forwarded to the component.
     pub fn resolve_pointer(
         &self,
         pointer: PointerEvent,
@@ -197,11 +226,13 @@ impl InputManager {
         Some(cmd)
     }
 
+    /// Add a global key binding.
     pub fn bind_key_global(&mut self, code: KeyCode, modifiers: KeyModifiers, command: Command) {
         self.key_global
             .insert(KeyStroke { code, modifiers }, command);
     }
 
+    /// Add a key binding for a specific component kind.
     pub fn bind_key_component(
         &mut self,
         component: ComponentKind,
@@ -215,10 +246,12 @@ impl InputManager {
             .insert(KeyStroke { code, modifiers }, command);
     }
 
+    /// Add a global pointer gesture binding.
     pub fn bind_pointer_global(&mut self, gesture: PointerGesture, binding: PointerBinding) {
         self.pointer_global.insert(gesture, binding);
     }
 
+    /// Add a pointer gesture binding for a specific component kind.
     pub fn bind_pointer_component(
         &mut self,
         component: ComponentKind,

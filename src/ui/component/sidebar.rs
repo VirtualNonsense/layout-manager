@@ -1,3 +1,5 @@
+//! Sidebar component — a navigable list of items.
+
 use ratatui::{
     Frame,
     layout::Rect,
@@ -6,15 +8,21 @@ use ratatui::{
 };
 use uuid::Uuid;
 
+use crate::event::component::Event;
 use crate::ui::{
     ComponentId,
     command::{PointerEvent, PointerGesture},
     component::{
         Component, ComponentKind, EventOutcome, RenderContext,
-        component_event::{Event, MouseEvent, MoveEvent},
+        events::{MouseEvent, MoveEvent},
+        widgets::focused_block,
     },
 };
 
+/// A stateful list displayed in the left pane.
+///
+/// Handles [`MoveEvent`] (keyboard up/down) and [`MouseEvent`] (scroll and
+/// click-to-select).  The selected item is highlighted with a yellow `›` symbol.
 pub struct SidebarComponent {
     id: ComponentId,
     items: Vec<String>,
@@ -28,6 +36,7 @@ impl Default for SidebarComponent {
 }
 
 impl SidebarComponent {
+    /// Create a sidebar pre-populated with the demo item list.
     pub fn new() -> Self {
         let mut state = ListState::default();
         state.select(Some(0));
@@ -69,7 +78,7 @@ impl Component for SidebarComponent {
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderContext<'_>) {
-        let block = super::focused_block("Menu", ctx.focused);
+        let block = focused_block("Menu", ctx.focused);
         let items = self.items.iter().map(|item| ListItem::new(item.as_str()));
         let list = List::new(items)
             .block(block)

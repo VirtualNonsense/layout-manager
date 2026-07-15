@@ -1,11 +1,25 @@
+//! Top-level application state and main event loop.
+//!
+//! [`App`] owns the async [`EventHandler`] and the [`Ui`], and drives the
+//! render / dispatch cycle.  It is the only place that translates [`UiAction`]
+//! values back into [`EventContainer`] messages (e.g. converting
+//! `UiAction::App(AppCommand::Quit)` into `EventContainer::Quit`).
+
 use crate::event::{EventContainer, EventHandler};
 use crate::ui::{AppCommand, Ui, UiAction};
 use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind, MouseEvent};
 use ratatui::{DefaultTerminal, Frame};
 
+/// Top-level application state.
+///
+/// Owns the event channel ([`EventHandler`]), the UI tree ([`Ui`]), and the
+/// `running` flag that drives the main loop.
 pub struct App {
+    /// Whether the main loop should keep running.
     pub running: bool,
+    /// Async event source (crossterm + tick timer).
     pub events: EventHandler,
+    /// The full UI tree (layout, focus, input, components).
     pub ui: Ui,
 }
 
@@ -20,10 +34,23 @@ impl Default for App {
 }
 
 impl App {
+    /// Create a new `App` with the default built-in UI.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Run the application loop until `running` is set to `false`.
+    ///
+    /// Each iteration draws one frame, then blocks on the next
+    /// [`EventContainer`]:
+    ///
+    /// - `Tick` — calls [`tick`](Self::tick) (currently a no-op, reserved for
+    ///   time-driven updates).
+    /// - `Quit` — calls [`quit`](Self::quit).
+    /// - `Crossterm(Key)` — forwards `KeyPress` events to [`Ui`].
+    /// - `Crossterm(Mouse)` — forwards mouse events to [`Ui`].
+    /// - `ComponentEvent` — **not yet implemented** (`todo!()`); reserved for
+    ///   components escalating events past the `UiAction` boundary.
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
         while self.running {
             terminal.draw(|frame| self.render(frame))?;
@@ -51,18 +78,22 @@ impl App {
         self.ui.render(frame, frame.area());
     }
 
+    /// Dispatch a key event to the UI and apply any resulting actions.
     pub fn handle_key_event(&mut self, key_event: KeyEvent) -> color_eyre::Result<()> {
         let actions = self.ui.handle_key_event(key_event);
         self.apply_actions(actions);
         Ok(())
     }
 
+    /// Dispatch a mouse event to the UI and apply any resulting actions.
     pub fn handle_mouse_event(&mut self, mouse_event: MouseEvent) -> color_eyre::Result<()> {
         let actions = self.ui.handle_mouse_event(mouse_event);
         self.apply_actions(actions);
         Ok(())
     }
 
+    /// Translate [`UiAction`] values produced by the UI layer back into
+    /// [`EventContainer`] messages on the event channel.
     fn apply_actions(&mut self, actions: Vec<UiAction>) {
         for action in actions {
             match action {
@@ -71,8 +102,11 @@ impl App {
         }
     }
 
+    /// Called on every tick event. Reserved for time-driven updates.
     pub fn tick(&mut self) {}
 
+    /// Set `running` to `false`, causing the main loop to exit after the
+    /// current iteration.
     pub fn quit(&mut self) {
         self.running = false;
     }

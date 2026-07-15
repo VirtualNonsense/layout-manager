@@ -1,3 +1,9 @@
+//! Entry point for the layout-manager demo application.
+//!
+//! Initialises the Ratatui terminal, enables mouse capture, runs [`App`], then
+//! restores the terminal unconditionally on exit — even if the app returns an
+//! error.
+
 use crate::app::App;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},

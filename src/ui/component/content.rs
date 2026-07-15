@@ -1,3 +1,5 @@
+//! Content component — the main right-hand pane.
+
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -6,15 +8,22 @@ use ratatui::{
 };
 use uuid::Uuid;
 
+use crate::event::component::Event;
 use crate::ui::{
     ComponentId,
     command::{PointerEvent, PointerGesture},
     component::{
         Component, ComponentKind, EventOutcome, RenderContext,
-        component_event::{Event, MouseEvent, MoveEvent},
+        events::{MouseEvent, MoveEvent},
+        widgets::focused_block,
     },
 };
 
+/// Demonstration content pane.
+///
+/// Displays the current focus ID, an integer counter, and the last click
+/// coordinates.  Handles [`MoveEvent`] (keyboard up/down increments/decrements
+/// the counter) and [`MouseEvent`] (scroll does the same).
 pub struct ContentComponent {
     id: ComponentId,
     counter: i64,
@@ -28,6 +37,7 @@ impl Default for ContentComponent {
 }
 
 impl ContentComponent {
+    /// Create a content component with the counter at zero.
     pub fn new() -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -72,7 +82,7 @@ impl Component for ContentComponent {
         );
 
         let paragraph = Paragraph::new(text)
-            .block(super::focused_block("Content", ctx.focused))
+            .block(focused_block("Content", ctx.focused))
             .alignment(Alignment::Center)
             .fg(Color::Cyan)
             .bg(Color::Black);
@@ -82,9 +92,9 @@ impl Component for ContentComponent {
     fn on(&mut self, event: &dyn Event) -> EventOutcome {
         if let Some(MoveEvent(direction)) = event.downcast_ref::<MoveEvent>() {
             match direction {
-                crate::ui::Direction2D::Up => self.counter += 1,
-                crate::ui::Direction2D::Down => self.counter -= 1,
-                crate::ui::Direction2D::Left | crate::ui::Direction2D::Right => {
+                crate::ui::Direction2D::Right => self.counter += 1,
+                crate::ui::Direction2D::Left => self.counter -= 1,
+                crate::ui::Direction2D::Up | crate::ui::Direction2D::Down => {
                     return EventOutcome::Ignored;
                 }
             }
