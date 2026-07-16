@@ -122,6 +122,7 @@ impl Component for SidebarComponent {
 
         if event.downcast_ref::<Submit>().is_some() {
             let selected = self.get_selected();
+            tracing::info!("submit in sidebar!");
             return EventOutcome::Consumed(vec![UiAction::Response(Box::new(
                 ContentComponentEvent(selected),
             ))]);

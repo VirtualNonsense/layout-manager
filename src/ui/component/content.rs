@@ -8,6 +8,7 @@ use ratatui::{
     style::{Color, Stylize},
     widgets::Paragraph,
 };
+use tracing::info;
 use uuid::Uuid;
 
 use crate::ui::{
@@ -19,21 +20,27 @@ use crate::ui::{
         widgets::focused_block,
     },
 };
-use crate::{event::component::Event, new_event};
+use crate::{
+    event::component::Event,
+    new_event,
+    ui::widget::{WidgetList, WidgetListState},
+};
 
 #[derive(Debug, Clone)]
 pub enum ContentMode {
     Counter,
     Help,
+    Logs,
 }
 impl ContentMode {
     pub const fn all() -> &'static [ContentMode] {
-        &[ContentMode::Counter, ContentMode::Help]
+        &[ContentMode::Counter, ContentMode::Help, ContentMode::Logs]
     }
     pub const fn as_str(&self) -> &'static str {
         match self {
             ContentMode::Counter => "Counter",
             ContentMode::Help => "Help",
+            ContentMode::Logs => "Logs",
         }
     }
 }
@@ -56,6 +63,7 @@ pub struct ContentComponent {
     counter: i64,
     last_click: Option<PointerEvent>,
     state: ContentMode,
+    option_log_list_state: Option<WidgetListState>,
 }
 
 impl Default for ContentComponent {
@@ -71,7 +79,8 @@ impl ContentComponent {
             id: Uuid::new_v4(),
             counter: 0,
             last_click: None,
-            state: ContentMode::Help,
+            state: ContentMode::Logs,
+            option_log_list_state: None,
         }
     }
 }
@@ -96,45 +105,83 @@ impl Component for ContentComponent {
             })
             .unwrap_or_else(|| "Last click: none".to_owned());
 
-        let text = format!(
-            "Associated command types + key/mouse input:\n\n\
-             q / Esc / Ctrl-C   Quit through original AppEvent channel\n\
-             Tab / Shift-Tab    Fokus wechseln\n\
-             Alt+Pfeile         Geometrische Fokus-Navigation\n\
-             Menu: ↑/↓ + click  Stateful ListState\n\
-             Content: ←/→       Counter ändern\n\
-             Content: click     Store click coordinates\n\n\
-             Focus: {}\n\
-             Counter: {}\n\
-             {}
-             mode: {}",
-            ctx.focus_id, self.counter, click_text, self.state,
-        );
+        match self.state {
+            ContentMode::Counter => {
+                let text = format!("Counter: {}", self.counter);
+                let paragraph = Paragraph::new(text)
+                    .block(focused_block("Counter View", ctx.focused))
+                    .alignment(Alignment::Center)
+                    .fg(Color::Cyan)
+                    .bg(Color::Black);
+                frame.render_widget(paragraph, area);
+            }
+            ContentMode::Help => {
+                let text = format!(
+                    "Associated command types + key/mouse input:\n\n\
+                     q / Esc / Ctrl-C   Quit through original AppEvent channel\n\
+                     Tab / Shift-Tab    Fokus wechseln\n\
+                     Alt+Pfeile         Geometrische Fokus-Navigation\n\
+                     Menu: ↑/↓ + click  Stateful ListState\n\
+                     Content: ←/→       Counter ändern\n\
+                     Content: click     Store click coordinates\n\n\
+                     Focus: {}\n\
+                     click_text: {}\n\
+                     mode: {}",
+                    ctx.focus_id, click_text, self.state,
+                );
+                let paragraph = Paragraph::new(text)
+                    .block(focused_block("Help View", ctx.focused))
+                    .alignment(Alignment::Center)
+                    .fg(Color::Cyan)
+                    .bg(Color::Black);
+                frame.render_widget(paragraph, area);
+            }
+            ContentMode::Logs => {
+                let entries = 40;
+                let mut list_state = self.option_log_list_state.clone().unwrap_or_default();
 
-        let paragraph = Paragraph::new(text)
-            .block(focused_block("Content", ctx.focused))
-            .alignment(Alignment::Center)
-            .fg(Color::Cyan)
-            .bg(Color::Black);
-        frame.render_widget(paragraph, area);
+                let iter = crate::log::tail_log_entries(entries).expect("failed to unpack logs");
+                let block = focused_block("Log view", ctx.focused);
+                frame.render_stateful_widget(
+                    WidgetList::new(iter.collect(), 2).block(Some(block)),
+                    area,
+                    &mut list_state,
+                );
+                self.option_log_list_state = Some(list_state);
+            }
+        };
     }
 
     fn on(&mut self, event: &dyn Event) -> EventOutcome {
-        if let Some(MoveEvent(direction)) = event.downcast_ref::<MoveEvent>() {
+        let delta = if let Some(MoveEvent(direction)) = event.downcast_ref::<MoveEvent>() {
             match direction {
-                crate::ui::Direction2D::Right => self.counter += 1,
-                crate::ui::Direction2D::Left => self.counter -= 1,
+                crate::ui::Direction2D::Right => 1,
+                crate::ui::Direction2D::Left => -1,
                 crate::ui::Direction2D::Up | crate::ui::Direction2D::Down => {
                     return EventOutcome::Ignored;
                 }
             }
-        }
-
-        if let Some(MouseEvent(pointer)) = event.downcast_ref::<MouseEvent>() {
+        } else if let Some(MouseEvent(pointer)) = event.downcast_ref::<MouseEvent>() {
             match pointer.gesture {
-                PointerGesture::ScrollUp => self.counter += 1,
-                PointerGesture::ScrollDown => self.counter -= 1,
+                PointerGesture::ScrollUp => -1,
+                PointerGesture::ScrollDown => 1,
                 _ => return EventOutcome::Ignored,
+            }
+        } else {
+            0
+        };
+        match self.state {
+            ContentMode::Counter => self.counter = self.counter.saturating_add(delta),
+            ContentMode::Help => {}
+            ContentMode::Logs => {
+                let mut state = self.option_log_list_state.clone().unwrap_or_default();
+                let selected = state
+                    .selected()
+                    .unwrap_or_default()
+                    .saturating_sub_signed(delta as isize);
+                info!("scroll state set to {selected}");
+                state.select(Some(selected));
+                self.option_log_list_state = Some(state);
             }
         }
 
@@ -144,6 +191,7 @@ impl Component for ContentComponent {
             match content_mode {
                 ContentMode::Counter => todo!(),
                 ContentMode::Help => todo!(),
+                ContentMode::Logs => todo!(),
             }
         }
         EventOutcome::Consumed(vec![])

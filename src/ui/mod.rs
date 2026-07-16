@@ -12,6 +12,7 @@ pub mod component;
 pub mod focus;
 pub mod input;
 pub mod layout;
+pub mod widget;
 
 use crate::event::component::Event;
 use crate::ui::builder::UiBuilder;

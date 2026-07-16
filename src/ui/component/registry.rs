@@ -1,8 +1,8 @@
 //! Type-erased storage for [`Component`] instances.
 
 use crate::event::component::Event;
-use crate::ui::component::context::{ComponentKind, EventOutcome, RenderContext};
 use crate::ui::component::Component;
+use crate::ui::component::context::{ComponentKind, EventOutcome, RenderContext};
 use crate::ui::layout::ComponentId;
 use ratatui::{Frame, layout::Rect};
 use std::collections::HashMap;

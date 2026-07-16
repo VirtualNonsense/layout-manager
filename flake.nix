@@ -33,6 +33,7 @@
             # Nützliches
             cargo-generate # templates
             cargo-watch
+            lldb
           ];
 
           shellHook = ''
