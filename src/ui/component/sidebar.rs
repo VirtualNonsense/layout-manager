@@ -8,16 +8,17 @@ use ratatui::{
 };
 use uuid::Uuid;
 
-use crate::event::component::Event;
 use crate::ui::{
-    ComponentId,
+    ComponentId, UiAction,
     command::{PointerEvent, PointerGesture},
     component::{
         Component, ComponentKind, EventOutcome, RenderContext,
-        events::{MouseEvent, MoveEvent},
+        content::ContentComponentEvent,
+        events::{MouseEvent, MoveEvent, Submit},
         widgets::focused_block,
     },
 };
+use crate::{event::component::Event, ui::component::content::ContentMode};
 
 /// A stateful list displayed in the left pane.
 ///
@@ -25,7 +26,7 @@ use crate::ui::{
 /// click-to-select).  The selected item is highlighted with a yellow `›` symbol.
 pub struct SidebarComponent {
     id: ComponentId,
-    items: Vec<String>,
+    items: Vec<ContentMode>,
     state: ListState,
 }
 
@@ -42,7 +43,7 @@ impl SidebarComponent {
         state.select(Some(0));
         Self {
             id: Uuid::new_v4(),
-            items: vec!["Overview".into(), "Settings".into(), "Logs".into()],
+            items: ContentMode::all().to_vec(),
             state,
         }
     }
@@ -65,6 +66,13 @@ impl SidebarComponent {
                 self.state.select(Some(index));
             }
         }
+    }
+
+    fn get_selected(&self) -> ContentMode {
+        self.items
+            .get(self.state.selected().unwrap_or(0))
+            .expect("Should not be empty")
+            .clone()
     }
 }
 
@@ -110,6 +118,13 @@ impl Component for SidebarComponent {
 
                 _ => return EventOutcome::Ignored,
             }
+        }
+
+        if event.downcast_ref::<Submit>().is_some() {
+            let selected = self.get_selected();
+            return EventOutcome::Consumed(vec![UiAction::Response(Box::new(
+                ContentComponentEvent(selected),
+            ))]);
         }
         EventOutcome::Consumed(vec![])
     }

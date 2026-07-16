@@ -1,5 +1,7 @@
 //! Content component — the main right-hand pane.
 
+use std::fmt::Display;
+
 use ratatui::{
     Frame,
     layout::{Alignment, Rect},
@@ -8,7 +10,6 @@ use ratatui::{
 };
 use uuid::Uuid;
 
-use crate::event::component::Event;
 use crate::ui::{
     ComponentId,
     command::{PointerEvent, PointerGesture},
@@ -18,6 +19,32 @@ use crate::ui::{
         widgets::focused_block,
     },
 };
+use crate::{event::component::Event, new_event};
+
+#[derive(Debug, Clone)]
+pub enum ContentMode {
+    Counter,
+    Help,
+}
+impl ContentMode {
+    pub const fn all() -> &'static [ContentMode] {
+        &[ContentMode::Counter, ContentMode::Help]
+    }
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            ContentMode::Counter => "Counter",
+            ContentMode::Help => "Help",
+        }
+    }
+}
+
+impl Display for ContentMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+new_event!(ContentComponentEvent, ContentMode);
 
 /// Demonstration content pane.
 ///
@@ -28,6 +55,7 @@ pub struct ContentComponent {
     id: ComponentId,
     counter: i64,
     last_click: Option<PointerEvent>,
+    state: ContentMode,
 }
 
 impl Default for ContentComponent {
@@ -43,6 +71,7 @@ impl ContentComponent {
             id: Uuid::new_v4(),
             counter: 0,
             last_click: None,
+            state: ContentMode::Help,
         }
     }
 }
@@ -77,8 +106,9 @@ impl Component for ContentComponent {
              Content: click     Store click coordinates\n\n\
              Focus: {}\n\
              Counter: {}\n\
-             {}",
-            ctx.focus_id, self.counter, click_text,
+             {}
+             mode: {}",
+            ctx.focus_id, self.counter, click_text, self.state,
         );
 
         let paragraph = Paragraph::new(text)
@@ -105,6 +135,15 @@ impl Component for ContentComponent {
                 PointerGesture::ScrollUp => self.counter += 1,
                 PointerGesture::ScrollDown => self.counter -= 1,
                 _ => return EventOutcome::Ignored,
+            }
+        }
+
+        if let Some(ContentComponentEvent(content_mode)) =
+            event.downcast_ref::<ContentComponentEvent>()
+        {
+            match content_mode {
+                ContentMode::Counter => todo!(),
+                ContentMode::Help => todo!(),
             }
         }
         EventOutcome::Consumed(vec![])

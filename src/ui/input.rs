@@ -8,7 +8,7 @@
 use crate::ui::command::{
     AppCommand, Command, Direction2D, FocusCommand, PointerBinding, PointerEvent, PointerGesture,
 };
-use crate::ui::component::events::{MouseEvent, MoveEvent};
+use crate::ui::component::events::{MouseEvent, MoveEvent, Submit};
 use crate::ui::component::{Component, ComponentKind, ContentComponent, SidebarComponent};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
@@ -62,6 +62,13 @@ impl InputManager {
     /// > bindings, but it is not yet called automatically by the builder.
     pub fn default_keymap() -> Self {
         let mut input = Self::default();
+
+        input.bind_key_component(
+            SidebarComponent::kind(),
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+            Command::Component(Box::new(Submit)),
+        );
 
         input.bind_key_global(
             KeyCode::Esc,

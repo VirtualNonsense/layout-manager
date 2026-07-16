@@ -26,7 +26,8 @@ pub enum Command {
 }
 
 /// An action produced by the UI layer that `App` must act on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub enum UiAction {
     App(AppCommand),
+    Response(Box<dyn Event>),
 }

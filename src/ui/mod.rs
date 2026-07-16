@@ -145,7 +145,7 @@ impl Ui {
     }
 
     /// Dispatch a resolved [`Command`] to the appropriate sub-system.
-    fn dispatch(&mut self, command: Command) -> Vec<UiAction> {
+    pub fn dispatch(&mut self, command: Command) -> Vec<UiAction> {
         match command {
             Command::App(cmd) => vec![UiAction::App(cmd)],
             Command::Focus(FocusCommand::Move(dir)) => {

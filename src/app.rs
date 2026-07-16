@@ -98,6 +98,18 @@ impl App {
         for action in actions {
             match action {
                 UiAction::App(AppCommand::Quit) => self.events.send(EventContainer::Quit),
+                UiAction::Response(event) => {
+                    let result = self
+                        .ui
+                        .dispatch(crate::ui::command::Command::Component(event.clone()));
+                    if !result.is_empty() {
+                        tracing::warn!(
+                            "{} did return ui actions: {:?}. this is not allowed due to loops",
+                            event.event_name(),
+                            result
+                        )
+                    }
+                }
             }
         }
     }
