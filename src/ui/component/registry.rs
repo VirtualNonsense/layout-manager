@@ -10,7 +10,7 @@ use std::collections::HashMap;
 /// Internal object-safe adapter used by [`ComponentRegistry`].
 ///
 /// Kept private so application code always works with the typed [`Component`] trait.
-trait ComponentAdapter {
+pub trait ComponentAdapter {
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderContext<'_>);
     fn on(&mut self, event: &dyn Event) -> EventOutcome;
     fn get_kind(&self) -> ComponentKind;
@@ -83,8 +83,16 @@ impl ComponentRegistry {
             .unwrap_or(EventOutcome::Ignored)
     }
 
+    pub fn on_broad_cast(&mut self, event: &dyn Event) -> impl Iterator<Item = EventOutcome> {
+        self.components_iter_mut().map(|c| c.on(event))
+    }
+
     /// Return the [`ComponentKind`] string for the component with `id`, if present.
     pub fn get_kind(&self, id: &ComponentId) -> Option<ComponentKind> {
         self.components.get(id).map(|c| c.get_kind())
+    }
+
+    fn components_iter_mut(&mut self) -> impl Iterator<Item = &mut Box<dyn ComponentAdapter>> {
+        self.components.values_mut()
     }
 }

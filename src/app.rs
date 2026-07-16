@@ -101,7 +101,7 @@ impl App {
                 UiAction::Response(event) => {
                     let result = self
                         .ui
-                        .dispatch(crate::ui::command::Command::Component(event.clone()));
+                        .dispatch(crate::ui::command::Command::BroadCast(event.clone()));
                     if !result.is_empty() {
                         tracing::warn!(
                             "{} did return ui actions: {:?}. this is not allowed due to loops",

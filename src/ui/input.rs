@@ -67,7 +67,7 @@ impl InputManager {
             SidebarComponent::kind(),
             KeyCode::Enter,
             KeyModifiers::NONE,
-            Command::Component(Box::new(Submit)),
+            Command::FocusedComponent(Box::new(Submit)),
         );
 
         input.bind_key_global(
@@ -131,13 +131,13 @@ impl InputManager {
             ContentComponent::kind(),
             KeyCode::Up,
             KeyModifiers::empty(),
-            Command::Component(Box::new(MoveEvent(Direction2D::Up))),
+            Command::FocusedComponent(Box::new(MoveEvent(Direction2D::Up))),
         );
         input.bind_key_component(
             ContentComponent::kind(),
             KeyCode::Down,
             KeyModifiers::empty(),
-            Command::Component(Box::new(MoveEvent(Direction2D::Down))),
+            Command::FocusedComponent(Box::new(MoveEvent(Direction2D::Down))),
         );
         input.bind_pointer_component(
             SidebarComponent::kind(),
@@ -153,13 +153,13 @@ impl InputManager {
             SidebarComponent::kind(),
             KeyCode::Up,
             KeyModifiers::empty(),
-            Command::Component(Box::new(MoveEvent(Direction2D::Up))),
+            Command::FocusedComponent(Box::new(MoveEvent(Direction2D::Up))),
         );
         input.bind_key_component(
             SidebarComponent::kind(),
             KeyCode::Down,
             KeyModifiers::empty(),
-            Command::Component(Box::new(MoveEvent(Direction2D::Down))),
+            Command::FocusedComponent(Box::new(MoveEvent(Direction2D::Down))),
         );
         input
     }
@@ -227,8 +227,8 @@ impl InputManager {
         }?;
 
         let cmd = match binding {
-            PointerBinding::Fixed(cmd) => Command::Component(cmd.clone()),
-            PointerBinding::WithEvent => Command::Component(Box::new(MouseEvent(pointer))),
+            PointerBinding::Fixed(cmd) => Command::FocusedComponent(cmd.clone()),
+            PointerBinding::WithEvent => Command::FocusedComponent(Box::new(MouseEvent(pointer))),
         };
         Some(cmd)
     }

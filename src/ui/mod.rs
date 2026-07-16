@@ -161,7 +161,8 @@ impl Ui {
                 self.focus.previous();
                 vec![]
             }
-            Command::Component(cmd) => self.dispatch_to_focused_component(cmd.as_ref()),
+            Command::FocusedComponent(event) => self.dispatch_to_focused_component(event.as_ref()),
+            Command::BroadCast(event) => self.broadcast_event(event.as_ref()),
         }
     }
 
@@ -170,15 +171,25 @@ impl Ui {
     /// Mouse-originated `ComponentCommand::Pointer` events are routed to the hovered component via
     /// `resolve_pointer` in `handle_mouse_event` — by the time we get here, the focused
     /// component is already correct (click-to-focus happened above).
-    fn dispatch_to_focused_component(&mut self, cmd: &dyn Event) -> Vec<UiAction> {
+    fn dispatch_to_focused_component(&mut self, event: &dyn Event) -> Vec<UiAction> {
         let Some(id) = self.focus.focused_component() else {
             return vec![];
         };
 
-        match self.components.on(&id, cmd) {
+        match self.components.on(&id, event) {
             EventOutcome::Ignored => vec![],
             EventOutcome::Consumed(actions) => actions,
         }
+    }
+
+    fn broadcast_event(&mut self, event: &dyn Event) -> Vec<UiAction> {
+        self.components
+            .on_broad_cast(event)
+            .flat_map(|event_outcome| match event_outcome {
+                EventOutcome::Ignored => vec![],
+                EventOutcome::Consumed(ui_actions) => ui_actions,
+            })
+            .collect()
     }
 
     fn get_focused_kind(&self) -> Option<ComponentKind> {

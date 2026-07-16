@@ -22,7 +22,8 @@ pub enum Command {
     App(AppCommand),
     Focus(FocusCommand),
     /// Route an abstract event to the currently focused (or pointer-targeted) component.
-    Component(Box<dyn Event>),
+    FocusedComponent(Box<dyn Event>),
+    BroadCast(Box<dyn Event>),
 }
 
 /// An action produced by the UI layer that `App` must act on.

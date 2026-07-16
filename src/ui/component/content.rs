@@ -188,11 +188,7 @@ impl Component for ContentComponent {
         if let Some(ContentComponentEvent(content_mode)) =
             event.downcast_ref::<ContentComponentEvent>()
         {
-            match content_mode {
-                ContentMode::Counter => todo!(),
-                ContentMode::Help => todo!(),
-                ContentMode::Logs => todo!(),
-            }
+            self.state = content_mode.clone()
         }
         EventOutcome::Consumed(vec![])
     }
