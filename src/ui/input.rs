@@ -126,6 +126,11 @@ impl InputManager {
             PointerGesture::ScrollDown,
             PointerBinding::WithEvent,
         );
+        input.bind_pointer_component(
+            ContentComponent::kind(),
+            PointerGesture::Down(PointerButton::Left),
+            PointerBinding::WithEvent,
+        );
         input.bind_key_component(
             ContentComponent::kind(),
             KeyCode::Up,
@@ -140,7 +145,7 @@ impl InputManager {
         );
         input.bind_pointer_component(
             ContentComponent::kind(),
-            PointerGesture::Down(PointerButton::Right),
+            PointerGesture::Down(PointerButton::Left),
             PointerBinding::WithEvent,
         );
 
@@ -157,7 +162,7 @@ impl InputManager {
         );
         input.bind_pointer_component(
             SidebarComponent::kind(),
-            PointerGesture::Down(PointerButton::Right),
+            PointerGesture::Down(PointerButton::Left),
             PointerBinding::WithEvent,
         );
         input.bind_key_component(
