@@ -106,7 +106,7 @@ impl Component for SidebarComponent {
                 crate::ui::Direction2D::Up => self.select_previous(),
                 crate::ui::Direction2D::Down => self.select_next(),
                 crate::ui::Direction2D::Left | crate::ui::Direction2D::Right => {
-                    return EventOutcome::Ignored;
+                    return EventOutcome::Ignored(event);
                 }
             }
         }
@@ -118,7 +118,7 @@ impl Component for SidebarComponent {
                 PointerGesture::ScrollDown => self.select_next(),
                 PointerGesture::Down(_) => self.click(pointer),
 
-                _ => return EventOutcome::Ignored,
+                _ => return EventOutcome::Ignored(event),
             }
         }
 
@@ -129,6 +129,6 @@ impl Component for SidebarComponent {
                 ContentComponentEvent::ContentMode(selected),
             ))]);
         }
-        EventOutcome::Consumed(vec![])
+        EventOutcome::Ignored(event)
     }
 }

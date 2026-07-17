@@ -23,12 +23,18 @@ pub enum Command {
     Focus(FocusCommand),
     /// Route an abstract event to the currently focused (or pointer-targeted) component.
     FocusedComponent(Box<dyn Event>),
+    /// Broadcast the event to all widgets.
+    /// The event will be cloned each time.
     BroadCast(Box<dyn Event>),
+    /// Broadcast the event to all widgets until one widget consumes it.
+    BroadCastTillConsumed(Box<dyn Event>),
 }
 
 /// An action produced by the UI layer that `App` must act on.
 #[derive(Clone, Debug)]
 pub enum UiAction {
+    /// command for the main application
     App(AppCommand),
+    /// will be broadcast to all widgets until one consumes it.
     Response(Box<dyn Event>),
 }

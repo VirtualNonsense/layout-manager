@@ -16,12 +16,14 @@ impl dyn Event {
     pub fn downcast_ref<T: Event + 'static>(&self) -> Option<&T> {
         self.as_any().downcast_ref::<T>()
     }
-    pub fn downcast_to<T: Event + 'static>(self: Box<Self>) -> Option<T> {
+    pub fn downcast_to<T: Event + 'static>(self: Box<Self>) -> Result<T, Box<Self>> {
         if self.as_any().is::<T>() {
-            let box_t = self.into_any().downcast::<T>().ok()?;
-            Some(*box_t)
+            match self.into_any().downcast::<T>() {
+                Ok(box_t) => Ok(*box_t),
+                Err(_) => unreachable!("type checked with is::<T>(), but downcast failed"),
+            }
         } else {
-            None
+            Err(self)
         }
     }
 }

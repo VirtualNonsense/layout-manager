@@ -115,13 +115,14 @@ impl App {
                     .events
                     .send(EventContainer::FetchLogs { origin, amount }),
                 UiAction::Response(event) => {
+                    let event_name = event.event_name();
                     let result = self
                         .ui
-                        .dispatch(crate::ui::command::Command::BroadCast(event.clone()));
+                        .dispatch(crate::ui::command::Command::BroadCastTillConsumed(event));
                     if !result.is_empty() {
                         tracing::warn!(
                             "{} did return ui actions: {:?}. this is not allowed due to loops",
-                            event.event_name(),
+                            event_name,
                             result
                         )
                     }

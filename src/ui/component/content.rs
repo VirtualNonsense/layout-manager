@@ -9,6 +9,7 @@ use ratatui::{
     style::{Color, Stylize},
     widgets::Paragraph,
 };
+use tracing::trace;
 use uuid::Uuid;
 
 use crate::{
@@ -172,7 +173,9 @@ impl Component for ContentComponent {
     }
 
     fn on(&mut self, event: Box<dyn Event>) -> EventOutcome {
-        if let Some(Tick) = event.downcast_ref::<Tick>() {
+        if let Some(Tick) = event.downcast_ref::<Tick>()
+            && matches!(self.state, ContentMode::Logs)
+        {
             return EventOutcome::Consumed(vec![UiAction::App(crate::ui::AppCommand::FetchLogs {
                 origin: self.id,
                 amount: self.log_entries,
@@ -188,7 +191,7 @@ impl Component for ContentComponent {
             match pointer.gesture {
                 PointerGesture::ScrollUp => -1,
                 PointerGesture::ScrollDown => 1,
-                _ => return EventOutcome::Ignored,
+                _ => return EventOutcome::Ignored(event),
             }
         } else {
             0
@@ -208,14 +211,18 @@ impl Component for ContentComponent {
             }
         }
 
-        if let Some(ContentComponentEvent::ContentMode(content_mode)) =
-            event.downcast_ref::<ContentComponentEvent>()
-        {
-            self.state = content_mode.clone()
+        match event.downcast_to::<ContentComponentEvent>() {
+            Ok(c) => {
+                trace!("handling {}", c.event_name());
+                match c {
+                    ContentComponentEvent::ContentMode(content_mode) => self.state = content_mode,
+                    ContentComponentEvent::NewLogs(logs) => {
+                        self.current_logs = Some(logs);
+                    }
+                }
+                EventOutcome::Consumed(vec![])
+            }
+            Err(event) => EventOutcome::Ignored(event),
         }
-        if let Some(ContentComponentEvent::NewLogs(logs)) = event.downcast_to() {
-            self.current_logs = Some(logs);
-        }
-        EventOutcome::Consumed(vec![])
     }
 }

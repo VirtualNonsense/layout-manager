@@ -169,6 +169,7 @@ impl Ui {
             }
             Command::FocusedComponent(event) => self.dispatch_to_focused_component(event),
             Command::BroadCast(event) => self.broadcast_event(event),
+            Command::BroadCastTillConsumed(event) => self.broadcast_event_till_consumed(event),
         }
     }
 
@@ -178,7 +179,7 @@ impl Ui {
         event: Box<dyn Event>,
     ) -> Vec<UiAction> {
         match self.components.on(&id, event) {
-            EventOutcome::Ignored => vec![],
+            EventOutcome::Ignored(_event) => vec![],
             EventOutcome::Consumed(actions) => actions,
         }
     }
@@ -199,11 +200,20 @@ impl Ui {
     }
 
     #[instrument(skip(self), level = "trace")]
+    fn broadcast_event_till_consumed(&mut self, event: Box<dyn Event>) -> Vec<UiAction> {
+        self.components.on_broadcast_till_consumed(event)
+    }
+
+    #[instrument(skip(self), level = "trace")]
+    /// Broadcast an event to all components.
+    /// This will clone the event each time.
     fn broadcast_event(&mut self, event: Box<dyn Event>) -> Vec<UiAction> {
         self.components
-            .on_broadcast(event)
+            .on_broadcast_cloned(event)
             .flat_map(|event_outcome| match event_outcome {
-                EventOutcome::Ignored => vec![],
+                EventOutcome::Ignored(_event) => {
+                    vec![]
+                }
                 EventOutcome::Consumed(ui_actions) => ui_actions,
             })
             .collect()

@@ -1,5 +1,6 @@
 //! Per-frame render context and event outcome types.
 
+use crate::event::component::Event;
 use crate::ui::command::UiAction;
 use crate::ui::layout::ComponentId;
 
@@ -17,7 +18,7 @@ pub struct RenderContext<'a> {
 /// Returned by a component's `on` handler to indicate whether the event was consumed.
 pub enum EventOutcome {
     /// The component did not handle this event.
-    Ignored,
+    Ignored(Box<dyn Event>),
     /// The component handled the event and may have produced UI-level actions.
     Consumed(Vec<UiAction>),
 }

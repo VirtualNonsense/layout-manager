@@ -1,6 +1,7 @@
 //! Type-erased storage for [`Component`] instances.
 
 use crate::event::component::Event;
+use crate::ui::UiAction;
 use crate::ui::component::Component;
 use crate::ui::component::context::{ComponentKind, EventOutcome, RenderContext};
 use crate::ui::layout::ComponentId;
@@ -77,21 +78,45 @@ impl ComponentRegistry {
     ///
     /// Returns [`EventOutcome::Ignored`] if no component with that ID is registered.
     pub fn on(&mut self, id: &ComponentId, event: Box<dyn Event>) -> EventOutcome {
-        self.components
-            .get_mut(id)
-            .map(|component| component.on(event))
-            .unwrap_or(EventOutcome::Ignored)
+        let opt_adapter = self.components.get_mut(id);
+        match opt_adapter {
+            Some(adapter) => adapter.on(event),
+            None => EventOutcome::Ignored(event),
+        }
     }
 
     /// Dispatch an event for all components.
     ///
     /// Returns [`EventOutcome`] for each component.
-    pub fn on_broadcast(&mut self, event: Box<dyn Event>) -> impl Iterator<Item = EventOutcome> {
+    pub fn on_broadcast_cloned(
+        &mut self,
+        event: Box<dyn Event>,
+    ) -> impl Iterator<Item = EventOutcome> {
         let mut outcomes = vec![];
         for component in self.components_iter_mut() {
             outcomes.push(component.on(event.clone()));
         }
         outcomes.into_iter()
+    }
+    /// Dispatch an event for all components.
+    ///
+    /// Returns [`EventOutcome`] for each component.
+    pub fn on_broadcast_till_consumed(&mut self, mut event: Box<dyn Event>) -> Vec<UiAction> {
+        for component in self.components_iter_mut() {
+            let event_name = event.event_name();
+            match component.on(event) {
+                EventOutcome::Ignored(return_event) => {
+                    tracing::trace!("{} ignored in {}", event_name, component.get_kind());
+                    event = return_event;
+                    continue;
+                }
+                EventOutcome::Consumed(ui_actions) => {
+                    tracing::trace!("{} consumed in {}", event_name, component.get_kind());
+                    return ui_actions;
+                }
+            }
+        }
+        vec![]
     }
 
     /// Return the [`ComponentKind`] string for the component with `id`, if present.
