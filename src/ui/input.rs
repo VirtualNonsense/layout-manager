@@ -186,28 +186,6 @@ impl InputManager {
         input
     }
 
-    /// Register a batch of key and pointer bindings for a given component kind.
-    ///
-    /// This is the intended API for components to declare their own bindings.
-    /// It is not yet called automatically by [`UiBuilder`](crate::ui::builder::UiBuilder);
-    /// bindings must currently be added manually in [`default_keymap`](Self::default_keymap).
-    #[instrument(skip(self), level = "trace")]
-    pub fn register_component_bindings(
-        &mut self,
-        kind: ComponentKind,
-        key_bindings: &[(KeyCode, KeyModifiers, Command)],
-        pointer_bindings: &[(PointerGesture, PointerBinding)],
-    ) {
-        for (code, modifiers, cmd) in key_bindings {
-            let cmd = cmd.clone();
-            self.bind_key_component(kind, *code, *modifiers, cmd);
-        }
-
-        for (gesture, binding) in pointer_bindings {
-            self.bind_pointer_component(kind, *gesture, binding.clone());
-        }
-    }
-
     /// Resolve a key event to a [`Command`].
     ///
     /// Checks the component-specific table for `focused` first; falls back to
