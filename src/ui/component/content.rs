@@ -153,7 +153,7 @@ impl Component for ContentComponent {
                 let block = focused_block("Log view", ctx.focused);
                 match &self.current_logs {
                     Some(entries) => {
-                        let mut list_state = self.option_log_list_state.clone().unwrap_or_default();
+                        let mut list_state = self.option_log_list_state.take().unwrap_or_default();
 
                         frame.render_stateful_widget(
                             WidgetList::new(entries, 1).block(Some(block)),
