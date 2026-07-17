@@ -7,7 +7,9 @@
 
 use crate::event::{EventContainer, EventHandler};
 use crate::log::LogEntry;
+use crate::ui::command::Command;
 use crate::ui::component::content::ContentComponentEvent;
+use crate::ui::component::events::Tick;
 use crate::ui::{AppCommand, Ui, UiAction};
 use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind, MouseEvent};
 use ratatui::{DefaultTerminal, Frame};
@@ -59,7 +61,10 @@ impl App {
             terminal.draw(|frame| self.render(frame))?;
 
             match self.events.next().await? {
-                EventContainer::Tick => self.tick(),
+                EventContainer::Tick => {
+                    let result = self.tick();
+                    self.apply_actions(result);
+                }
                 EventContainer::Quit => self.quit(),
                 EventContainer::Crossterm(CrosstermEvent::Key(key_event))
                     if key_event.kind == KeyEventKind::Press =>
@@ -126,7 +131,9 @@ impl App {
     }
 
     /// Called on every tick event. Reserved for time-driven updates.
-    pub fn tick(&mut self) {}
+    pub fn tick(&mut self) -> Vec<UiAction> {
+        self.ui.dispatch(Command::BroadCast(Box::new(Tick)))
+    }
 
     /// Set `running` to `false`, causing the main loop to exit after the
     /// current iteration.

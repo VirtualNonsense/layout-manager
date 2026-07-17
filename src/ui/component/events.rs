@@ -11,3 +11,5 @@ new_event!(MoveEvent, Direction2D);
 new_event!(Submit);
 
 new_event!(MouseEvent, PointerEvent);
+
+new_event!(Tick);

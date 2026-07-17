@@ -1,5 +1,6 @@
 //! Content component — the main right-hand pane.
 
+use std::default::Default;
 use std::fmt::Display;
 
 use ratatui::{
@@ -15,6 +16,7 @@ use crate::{
     new_event,
     ui::{
         UiAction,
+        component::events::Tick,
         widget::{WidgetList, WidgetListState},
     },
 };
@@ -170,6 +172,13 @@ impl Component for ContentComponent {
     }
 
     fn on(&mut self, event: Box<dyn Event>) -> EventOutcome {
+        if let Some(Tick) = event.downcast_ref::<Tick>() {
+            return EventOutcome::Consumed(vec![UiAction::App(crate::ui::AppCommand::FetchLogs {
+                origin: self.id,
+                amount: self.log_entries,
+            })]);
+        }
+
         let delta = if let Some(MoveEvent(direction)) = event.downcast_ref::<MoveEvent>() {
             match direction {
                 Direction2D::Right | Direction2D::Up => 1,
@@ -207,9 +216,6 @@ impl Component for ContentComponent {
         if let Some(ContentComponentEvent::NewLogs(logs)) = event.downcast_to() {
             self.current_logs = Some(logs);
         }
-        EventOutcome::Consumed(vec![UiAction::App(crate::ui::AppCommand::FetchLogs {
-            origin: self.id,
-            amount: self.log_entries,
-        })])
+        EventOutcome::Consumed(vec![])
     }
 }
