@@ -116,7 +116,13 @@ impl Component for SidebarComponent {
             match pointer.gesture {
                 PointerGesture::ScrollUp => self.select_previous(),
                 PointerGesture::ScrollDown => self.select_next(),
-                PointerGesture::Down(_) => self.click(pointer),
+                PointerGesture::Down(_) => {
+                    self.click(pointer);
+                    let selected = self.get_selected();
+                    return EventOutcome::Consumed(vec![UiAction::Response(Box::new(
+                        ContentComponentEvent::ContentMode(selected),
+                    ))]);
+                }
 
                 _ => return EventOutcome::Ignored(event),
             }
