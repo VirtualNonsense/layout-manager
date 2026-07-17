@@ -28,6 +28,7 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Rect},
 };
+use tracing::{instrument, trace};
 
 pub use crate::ui::command::{AppCommand, Direction2D, UiAction};
 pub use crate::ui::layout::ComponentId;
@@ -93,6 +94,7 @@ impl Ui {
     /// Recompute the layout, update focus regions, and render all components.
     ///
     /// Called once per frame by `App`.
+    #[instrument(skip(self), level = "trace")]
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let regions = self.layout.compute(area);
         self.update_focus_regions(&regions);
@@ -111,6 +113,7 @@ impl Ui {
     /// Resolve a key event to a [`Command`] and dispatch it.
     ///
     /// Returns any [`UiAction`] values that `App` must act on.
+    #[instrument(skip(self), level = "trace")]
     pub fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> Vec<UiAction> {
         let Some(command) = self.input.resolve_key(key, self.get_focused_kind()) else {
             return vec![];
@@ -125,6 +128,7 @@ impl Ui {
     /// before the command is dispatched.  The hovered component (determined by
     /// hit-testing) is used for pointer binding resolution, not the keyboard
     /// focus.
+    #[instrument(skip(self), level = "trace")]
     pub fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) -> Vec<UiAction> {
         let hit = self.focus.region_at(mouse.column, mouse.row).cloned();
 
@@ -132,13 +136,14 @@ impl Ui {
         if let Some(region) = hit.as_ref()
             && PointerEvent::is_focus_event(mouse.kind)
         {
-            self.focus.set_current(region.focus);
+            self.focus.set_current(Some(region.focus));
         }
 
         let pointer = PointerEvent::from_mouse_event(mouse, hit.as_ref().map(|r| r.rect));
         let hovered = self.get_hovered_kind(hit);
 
         let Some(command) = self.input.resolve_pointer(pointer, hovered) else {
+            trace!("resolve_pointer return None");
             return vec![];
         };
 
@@ -146,6 +151,7 @@ impl Ui {
     }
 
     /// Dispatch a resolved [`Command`] to the appropriate sub-system.
+    #[instrument(skip(self), level = "trace")]
     pub fn dispatch(&mut self, command: Command) -> Vec<UiAction> {
         match command {
             Command::App(cmd) => vec![UiAction::App(cmd)],
@@ -161,8 +167,19 @@ impl Ui {
                 self.focus.previous();
                 vec![]
             }
-            Command::FocusedComponent(event) => self.dispatch_to_focused_component(event.as_ref()),
-            Command::BroadCast(event) => self.broadcast_event(event.as_ref()),
+            Command::FocusedComponent(event) => self.dispatch_to_focused_component(event),
+            Command::BroadCast(event) => self.broadcast_event(event),
+        }
+    }
+
+    pub fn dispatch_event_for_component(
+        &mut self,
+        id: ComponentId,
+        event: Box<dyn Event>,
+    ) -> Vec<UiAction> {
+        match self.components.on(&id, event) {
+            EventOutcome::Ignored => vec![],
+            EventOutcome::Consumed(actions) => actions,
         }
     }
 
@@ -171,20 +188,20 @@ impl Ui {
     /// Mouse-originated `ComponentCommand::Pointer` events are routed to the hovered component via
     /// `resolve_pointer` in `handle_mouse_event` — by the time we get here, the focused
     /// component is already correct (click-to-focus happened above).
-    fn dispatch_to_focused_component(&mut self, event: &dyn Event) -> Vec<UiAction> {
+    #[instrument(skip(self), level = "trace")]
+    fn dispatch_to_focused_component(&mut self, event: Box<dyn Event>) -> Vec<UiAction> {
         let Some(id) = self.focus.focused_component() else {
+            trace!("no focused component: {}", event.event_name());
             return vec![];
         };
-
-        match self.components.on(&id, event) {
-            EventOutcome::Ignored => vec![],
-            EventOutcome::Consumed(actions) => actions,
-        }
+        trace!("{}: {}", id, event.event_name());
+        self.dispatch_event_for_component(id, event)
     }
 
-    fn broadcast_event(&mut self, event: &dyn Event) -> Vec<UiAction> {
+    #[instrument(skip(self), level = "trace")]
+    fn broadcast_event(&mut self, event: Box<dyn Event>) -> Vec<UiAction> {
         self.components
-            .on_broad_cast(event)
+            .on_broadcast(event)
             .flat_map(|event_outcome| match event_outcome {
                 EventOutcome::Ignored => vec![],
                 EventOutcome::Consumed(ui_actions) => ui_actions,
@@ -192,6 +209,7 @@ impl Ui {
             .collect()
     }
 
+    #[instrument(skip(self), level = "trace")]
     fn get_focused_kind(&self) -> Option<ComponentKind> {
         self.focus.focused_component().map(|id| {
             self.components
@@ -200,6 +218,7 @@ impl Ui {
         })
     }
 
+    #[instrument(skip(self), level = "trace")]
     fn get_hovered_kind(&self, hit: Option<FocusRegion>) -> Option<ComponentKind> {
         hit.as_ref().map(|region| {
             self.components
@@ -208,6 +227,7 @@ impl Ui {
         })
     }
 
+    #[instrument(skip(self), level = "trace")]
     fn update_focus_regions(&mut self, regions: &[LaidOutRegion]) {
         self.focus
             .set_regions(regions.iter().map(|region| FocusRegion {

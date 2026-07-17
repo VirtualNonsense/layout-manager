@@ -8,22 +8,27 @@ use ratatui::{
     style::{Color, Stylize},
     widgets::Paragraph,
 };
-use tracing::info;
 use uuid::Uuid;
 
-use crate::ui::{
-    ComponentId,
-    command::{PointerEvent, PointerGesture},
-    component::{
-        Component, ComponentKind, EventOutcome, RenderContext,
-        events::{MouseEvent, MoveEvent},
-        widgets::focused_block,
-    },
-};
 use crate::{
     event::component::Event,
     new_event,
-    ui::widget::{WidgetList, WidgetListState},
+    ui::{
+        UiAction,
+        widget::{WidgetList, WidgetListState},
+    },
+};
+use crate::{
+    log::LogEntry,
+    ui::{
+        ComponentId, Direction2D,
+        command::{PointerEvent, PointerGesture},
+        component::{
+            Component, ComponentKind, EventOutcome, RenderContext,
+            events::{MouseEvent, MoveEvent},
+            widgets::focused_block,
+        },
+    },
 };
 
 #[derive(Debug, Clone)]
@@ -51,7 +56,12 @@ impl Display for ContentMode {
     }
 }
 
-new_event!(ContentComponentEvent, ContentMode);
+new_event!(
+    enum ContentComponentEvent {
+        ContentMode(ContentMode),
+        NewLogs(Vec<crate::log::LogEntry>),
+    }
+);
 
 /// Demonstration content pane.
 ///
@@ -64,6 +74,8 @@ pub struct ContentComponent {
     last_click: Option<PointerEvent>,
     state: ContentMode,
     option_log_list_state: Option<WidgetListState>,
+    log_entries: usize,
+    current_logs: Option<Vec<LogEntry>>,
 }
 
 impl Default for ContentComponent {
@@ -81,6 +93,8 @@ impl ContentComponent {
             last_click: None,
             state: ContentMode::Logs,
             option_log_list_state: None,
+            log_entries: 400,
+            current_logs: None,
         }
     }
 }
@@ -123,7 +137,6 @@ impl Component for ContentComponent {
                      Alt+Pfeile         Geometrische Fokus-Navigation\n\
                      Menu: ↑/↓ + click  Stateful ListState\n\
                      Content: ←/→       Counter ändern\n\
-                     Content: click     Store click coordinates\n\n\
                      Focus: {}\n\
                      click_text: {}\n\
                      mode: {}",
@@ -137,29 +150,30 @@ impl Component for ContentComponent {
                 frame.render_widget(paragraph, area);
             }
             ContentMode::Logs => {
-                let entries = 40;
-                let mut list_state = self.option_log_list_state.clone().unwrap_or_default();
-
-                let iter = crate::log::tail_log_entries(entries).expect("failed to unpack logs");
                 let block = focused_block("Log view", ctx.focused);
-                frame.render_stateful_widget(
-                    WidgetList::new(iter.collect(), 2).block(Some(block)),
-                    area,
-                    &mut list_state,
-                );
-                self.option_log_list_state = Some(list_state);
+                match &self.current_logs {
+                    Some(entries) => {
+                        let mut list_state = self.option_log_list_state.clone().unwrap_or_default();
+
+                        frame.render_stateful_widget(
+                            WidgetList::new(entries, 1).block(Some(block)),
+                            area,
+                            &mut list_state,
+                        );
+                        self.option_log_list_state = Some(list_state);
+                    }
+                    None => frame
+                        .render_widget(Paragraph::new("waiting for logging").block(block), area),
+                }
             }
         };
     }
 
-    fn on(&mut self, event: &dyn Event) -> EventOutcome {
+    fn on(&mut self, event: Box<dyn Event>) -> EventOutcome {
         let delta = if let Some(MoveEvent(direction)) = event.downcast_ref::<MoveEvent>() {
             match direction {
-                crate::ui::Direction2D::Right => 1,
-                crate::ui::Direction2D::Left => -1,
-                crate::ui::Direction2D::Up | crate::ui::Direction2D::Down => {
-                    return EventOutcome::Ignored;
-                }
+                Direction2D::Right | Direction2D::Up => 1,
+                Direction2D::Left | Direction2D::Down => -1,
             }
         } else if let Some(MouseEvent(pointer)) = event.downcast_ref::<MouseEvent>() {
             match pointer.gesture {
@@ -174,22 +188,28 @@ impl Component for ContentComponent {
             ContentMode::Counter => self.counter = self.counter.saturating_add(delta),
             ContentMode::Help => {}
             ContentMode::Logs => {
-                let mut state = self.option_log_list_state.clone().unwrap_or_default();
-                let selected = state
-                    .selected()
-                    .unwrap_or_default()
-                    .saturating_sub_signed(delta as isize);
-                info!("scroll state set to {selected}");
-                state.select(Some(selected));
+                let mut state: WidgetListState =
+                    self.option_log_list_state.clone().unwrap_or_default();
+                if delta <= 0 {
+                    state.select_previous(self.log_entries);
+                } else {
+                    state.select_next(self.log_entries);
+                }
                 self.option_log_list_state = Some(state);
             }
         }
 
-        if let Some(ContentComponentEvent(content_mode)) =
+        if let Some(ContentComponentEvent::ContentMode(content_mode)) =
             event.downcast_ref::<ContentComponentEvent>()
         {
             self.state = content_mode.clone()
         }
-        EventOutcome::Consumed(vec![])
+        if let Some(ContentComponentEvent::NewLogs(logs)) = event.downcast_to() {
+            self.current_logs = Some(logs);
+        }
+        EventOutcome::Consumed(vec![UiAction::App(crate::ui::AppCommand::FetchLogs {
+            origin: self.id,
+            amount: self.log_entries,
+        })])
     }
 }

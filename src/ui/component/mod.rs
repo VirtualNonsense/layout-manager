@@ -13,8 +13,8 @@ pub mod widgets;
 pub mod content;
 pub mod sidebar;
 
-pub use context::{ComponentKind, EventOutcome, RenderContext};
 pub use content::ContentComponent;
+pub use context::{ComponentKind, EventOutcome, RenderContext};
 pub use registry::ComponentRegistry;
 pub use sidebar::SidebarComponent;
 
@@ -45,5 +45,5 @@ pub trait Component {
     ///
     /// Components should handle only the event types they understand and return
     /// [`EventOutcome::Ignored`] for everything else.
-    fn on(&mut self, event: &dyn Event) -> EventOutcome;
+    fn on(&mut self, event: Box<dyn Event>) -> EventOutcome;
 }

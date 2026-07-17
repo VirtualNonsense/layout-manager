@@ -12,7 +12,7 @@ use std::collections::HashMap;
 /// Kept private so application code always works with the typed [`Component`] trait.
 pub trait ComponentAdapter {
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderContext<'_>);
-    fn on(&mut self, event: &dyn Event) -> EventOutcome;
+    fn on(&mut self, event: Box<dyn Event>) -> EventOutcome;
     fn get_kind(&self) -> ComponentKind;
 }
 
@@ -21,7 +21,7 @@ impl<T: Component + 'static> ComponentAdapter for T {
         Component::render(self, frame, area, ctx);
     }
 
-    fn on(&mut self, event: &dyn Event) -> EventOutcome {
+    fn on(&mut self, event: Box<dyn Event>) -> EventOutcome {
         Component::on(self, event)
     }
 
@@ -76,15 +76,22 @@ impl ComponentRegistry {
     /// Dispatch an event to the component with `id`.
     ///
     /// Returns [`EventOutcome::Ignored`] if no component with that ID is registered.
-    pub fn on(&mut self, id: &ComponentId, event: &dyn Event) -> EventOutcome {
+    pub fn on(&mut self, id: &ComponentId, event: Box<dyn Event>) -> EventOutcome {
         self.components
             .get_mut(id)
             .map(|component| component.on(event))
             .unwrap_or(EventOutcome::Ignored)
     }
 
-    pub fn on_broad_cast(&mut self, event: &dyn Event) -> impl Iterator<Item = EventOutcome> {
-        self.components_iter_mut().map(|c| c.on(event))
+    /// Dispatch an event for all components.
+    ///
+    /// Returns [`EventOutcome`] for each component.
+    pub fn on_broadcast(&mut self, event: Box<dyn Event>) -> impl Iterator<Item = EventOutcome> {
+        let mut outcomes = vec![];
+        for component in self.components_iter_mut() {
+            outcomes.push(component.on(event.clone()));
+        }
+        outcomes.into_iter()
     }
 
     /// Return the [`ComponentKind`] string for the component with `id`, if present.

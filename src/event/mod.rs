@@ -17,7 +17,7 @@ use futures::{FutureExt, StreamExt};
 use std::{fmt::Debug, time::Duration};
 use tokio::sync::mpsc;
 
-use crate::event::component::Event;
+use crate::{event::component::Event, ui::ComponentId};
 
 /// Target render / tick rate in frames per second.
 const TICK_FPS: f64 = 30.0;
@@ -28,8 +28,13 @@ pub enum EventContainer {
     /// Periodic timer tick at [`TICK_FPS`] Hz.  Used to drive animations or
     /// time-based state updates.
     Tick,
+
     /// Requests a clean application shutdown.
     Quit,
+
+    /// Fetch logs for the view
+    FetchLogs { origin: ComponentId, amount: usize },
+
     /// A raw crossterm terminal event (key press, mouse, resize, …).
     Crossterm(CrosstermEvent),
     /// A component-originated event that needs to reach `App`.

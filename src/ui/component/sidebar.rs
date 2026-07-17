@@ -6,6 +6,7 @@ use ratatui::{
     style::{Color, Style},
     widgets::{List, ListItem, ListState},
 };
+use tracing::trace;
 use uuid::Uuid;
 
 use crate::ui::{
@@ -99,7 +100,7 @@ impl Component for SidebarComponent {
         frame.render_stateful_widget(list, area, &mut self.state);
     }
 
-    fn on(&mut self, event: &dyn Event) -> EventOutcome {
+    fn on(&mut self, event: Box<dyn Event>) -> EventOutcome {
         if let Some(MoveEvent(direction)) = event.downcast_ref::<MoveEvent>() {
             match direction {
                 crate::ui::Direction2D::Up => self.select_previous(),
@@ -111,6 +112,7 @@ impl Component for SidebarComponent {
         }
 
         if let Some(MouseEvent(pointer)) = event.downcast_ref::<MouseEvent>() {
+            trace!("pointer event: {:?}", pointer);
             match pointer.gesture {
                 PointerGesture::ScrollUp => self.select_previous(),
                 PointerGesture::ScrollDown => self.select_next(),
@@ -122,9 +124,9 @@ impl Component for SidebarComponent {
 
         if event.downcast_ref::<Submit>().is_some() {
             let selected = self.get_selected();
-            tracing::info!("submit in sidebar!");
+            trace!("submit in sidebar!");
             return EventOutcome::Consumed(vec![UiAction::Response(Box::new(
-                ContentComponentEvent(selected),
+                ContentComponentEvent::ContentMode(selected),
             ))]);
         }
         EventOutcome::Consumed(vec![])

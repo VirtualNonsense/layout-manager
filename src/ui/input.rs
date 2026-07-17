@@ -12,6 +12,9 @@ use crate::ui::component::events::{MouseEvent, MoveEvent, Submit};
 use crate::ui::component::{Component, ComponentKind, ContentComponent, SidebarComponent};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::collections::HashMap;
+use tracing::{Level, instrument, trace};
+
+use super::command::PointerButton;
 
 /// A normalised key press: key code plus modifier mask.
 ///
@@ -41,9 +44,9 @@ impl From<KeyEvent> for KeyStroke {
 ///   keys (e.g. `↑`/`↓` for navigation inside a list).
 #[derive(Default)]
 pub struct InputManager {
-    key_global: HashMap<KeyStroke, Command>,
+    key_app: HashMap<KeyStroke, Command>,
     key_component: HashMap<ComponentKind, HashMap<KeyStroke, Command>>,
-    pointer_global: HashMap<PointerGesture, PointerBinding>,
+    pointer_app: HashMap<PointerGesture, PointerBinding>,
     pointer_component: HashMap<ComponentKind, HashMap<PointerGesture, PointerBinding>>,
 }
 
@@ -60,63 +63,59 @@ impl InputManager {
     /// > [`register_component_bindings`](Self::register_component_bindings)
     /// > exists as the intended future API for components to declare their own
     /// > bindings, but it is not yet called automatically by the builder.
+    #[instrument(level = "trace")]
     pub fn default_keymap() -> Self {
         let mut input = Self::default();
 
-        input.bind_key_component(
-            SidebarComponent::kind(),
-            KeyCode::Enter,
-            KeyModifiers::NONE,
-            Command::FocusedComponent(Box::new(Submit)),
-        );
-
-        input.bind_key_global(
+        input.bind_app_event(
             KeyCode::Esc,
             KeyModifiers::NONE,
             Command::App(AppCommand::Quit),
         );
-        input.bind_key_global(
+        input.bind_app_event(
             KeyCode::Char('q'),
             KeyModifiers::NONE,
             Command::App(AppCommand::Quit),
         );
-        input.bind_key_global(
+        input.bind_app_event(
             KeyCode::Char('c'),
             KeyModifiers::CONTROL,
             Command::App(AppCommand::Quit),
         );
 
-        input.bind_key_global(
+        input.bind_app_event(
             KeyCode::Tab,
             KeyModifiers::NONE,
             Command::Focus(FocusCommand::Next),
         );
-        input.bind_key_global(
+        input.bind_app_event(
             KeyCode::BackTab,
             KeyModifiers::SHIFT,
             Command::Focus(FocusCommand::Previous),
         );
 
-        input.bind_key_global(
+        input.bind_app_event(
             KeyCode::Up,
             KeyModifiers::ALT,
             Command::Focus(FocusCommand::Move(Direction2D::Up)),
         );
-        input.bind_key_global(
+        input.bind_app_event(
             KeyCode::Down,
             KeyModifiers::ALT,
             Command::Focus(FocusCommand::Move(Direction2D::Down)),
         );
-        input.bind_key_global(
+        input.bind_app_event(
             KeyCode::Left,
             KeyModifiers::ALT,
             Command::Focus(FocusCommand::Move(Direction2D::Left)),
         );
-        input.bind_key_global(
+        input.bind_app_event(
             KeyCode::Right,
             KeyModifiers::ALT,
             Command::Focus(FocusCommand::Move(Direction2D::Right)),
         );
+
+        // ContentComponent
         input.bind_pointer_component(
             ContentComponent::kind(),
             PointerGesture::ScrollUp,
@@ -140,6 +139,13 @@ impl InputManager {
             Command::FocusedComponent(Box::new(MoveEvent(Direction2D::Down))),
         );
         input.bind_pointer_component(
+            ContentComponent::kind(),
+            PointerGesture::Down(PointerButton::Right),
+            PointerBinding::WithEvent,
+        );
+
+        // SidebarComponent
+        input.bind_pointer_component(
             SidebarComponent::kind(),
             PointerGesture::ScrollUp,
             PointerBinding::WithEvent,
@@ -147,6 +153,11 @@ impl InputManager {
         input.bind_pointer_component(
             SidebarComponent::kind(),
             PointerGesture::ScrollDown,
+            PointerBinding::WithEvent,
+        );
+        input.bind_pointer_component(
+            SidebarComponent::kind(),
+            PointerGesture::Down(PointerButton::Right),
             PointerBinding::WithEvent,
         );
         input.bind_key_component(
@@ -160,6 +171,12 @@ impl InputManager {
             KeyCode::Down,
             KeyModifiers::empty(),
             Command::FocusedComponent(Box::new(MoveEvent(Direction2D::Down))),
+        );
+        input.bind_key_component(
+            SidebarComponent::kind(),
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+            Command::FocusedComponent(Box::new(Submit)),
         );
         input
     }
@@ -169,6 +186,7 @@ impl InputManager {
     /// This is the intended API for components to declare their own bindings.
     /// It is not yet called automatically by [`UiBuilder`](crate::ui::builder::UiBuilder);
     /// bindings must currently be added manually in [`default_keymap`](Self::default_keymap).
+    #[instrument(skip(self), level = "trace")]
     pub fn register_component_bindings(
         &mut self,
         kind: ComponentKind,
@@ -189,6 +207,7 @@ impl InputManager {
     ///
     /// Checks the component-specific table for `focused` first; falls back to
     /// the global table.  Returns `None` if the key is unbound.
+    #[instrument(skip(self), level = "trace")]
     pub fn resolve_key(&self, key: KeyEvent, focused: Option<ComponentKind>) -> Option<Command> {
         let key = KeyStroke::from(key);
 
@@ -201,7 +220,7 @@ impl InputManager {
             return Some(command.clone());
         }
 
-        self.key_global.get(&key).cloned()
+        self.key_app.get(&key).cloned()
     }
 
     /// Resolve a pointer event to a [`Command`].
@@ -212,19 +231,26 @@ impl InputManager {
     /// When a binding is [`PointerBinding::WithEvent`], the full
     /// [`PointerEvent`] (including component-local coordinates) is wrapped in a
     /// [`MouseEvent`] and forwarded to the component.
+    #[instrument(skip(self), level = "trace")]
     pub fn resolve_pointer(
         &self,
         pointer: PointerEvent,
         hovered: Option<ComponentKind>,
     ) -> Option<Command> {
-        let binding = if let Some(kind) = hovered {
-            self.pointer_component
-                .get(kind)
-                .and_then(|bindings| bindings.get(&pointer.gesture))
-                .or_else(|| self.pointer_global.get(&pointer.gesture))
-        } else {
-            self.pointer_global.get(&pointer.gesture)
-        }?;
+        let binding = {
+            let span = tracing::span!(Level::TRACE, "select_binding");
+            let _enter = span.enter();
+            if let Some(kind) = hovered {
+                trace!("hovered: {kind}");
+                self.pointer_component
+                    .get(kind)
+                    .and_then(|bindings| bindings.get(&pointer.gesture))
+                    .or_else(|| self.pointer_app.get(&pointer.gesture))
+            } else {
+                trace!("resolving pointer binding instead");
+                self.pointer_app.get(&pointer.gesture)
+            }?
+        };
 
         let cmd = match binding {
             PointerBinding::Fixed(cmd) => Command::FocusedComponent(cmd.clone()),
@@ -234,12 +260,13 @@ impl InputManager {
     }
 
     /// Add a global key binding.
-    pub fn bind_key_global(&mut self, code: KeyCode, modifiers: KeyModifiers, command: Command) {
-        self.key_global
-            .insert(KeyStroke { code, modifiers }, command);
+    #[instrument(skip(self), level = "trace")]
+    pub fn bind_app_event(&mut self, code: KeyCode, modifiers: KeyModifiers, command: Command) {
+        self.key_app.insert(KeyStroke { code, modifiers }, command);
     }
 
     /// Add a key binding for a specific component kind.
+    #[instrument(skip(self), level = "trace")]
     pub fn bind_key_component(
         &mut self,
         component: ComponentKind,
@@ -254,11 +281,13 @@ impl InputManager {
     }
 
     /// Add a global pointer gesture binding.
-    pub fn bind_pointer_global(&mut self, gesture: PointerGesture, binding: PointerBinding) {
-        self.pointer_global.insert(gesture, binding);
+    #[instrument(skip(self), level = "trace")]
+    pub fn bind_pointer_app_event(&mut self, gesture: PointerGesture, binding: PointerBinding) {
+        self.pointer_app.insert(gesture, binding);
     }
 
     /// Add a pointer gesture binding for a specific component kind.
+    #[instrument(skip(self), level = "trace")]
     pub fn bind_pointer_component(
         &mut self,
         component: ComponentKind,

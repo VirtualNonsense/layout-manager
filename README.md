@@ -73,7 +73,7 @@ pub trait Component {
     fn id(&self) -> ComponentId;
     fn kind() -> ComponentKind where Self: Sized;  // static string, used for input routing
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: RenderContext<'_>);
-    fn on(&mut self, event: &dyn Event) -> EventOutcome;
+    fn on(&mut self, event: Box<dyn Event>) -> EventOutcome;
 }
 ```
 

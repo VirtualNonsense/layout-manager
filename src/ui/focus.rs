@@ -10,6 +10,7 @@
 use crate::ui::command::Direction2D;
 use crate::ui::layout::ComponentId;
 use ratatui::layout::Rect;
+use tracing::{Level, instrument, trace, warn};
 
 /// A focus slot as it exists in screen space.
 ///
@@ -58,9 +59,23 @@ impl FocusManager {
     ///
     /// The request is silently ignored if `focus` is not in the current region
     /// list.
-    pub fn set_current(&mut self, focus: ComponentId) {
-        if self.regions.iter().any(|region| region.focus == focus) {
-            self.current = Some(focus);
+    #[instrument(skip(self), level = "trace")]
+    pub fn set_current(&mut self, focus: Option<ComponentId>) {
+        match focus {
+            Some(focus) => {
+                let span = tracing::span!(Level::TRACE, "Focus is Some");
+                let _entered = span.enter();
+                if self.regions.iter().any(|region| region.focus == focus) {
+                    trace!("Successfully set focus to {focus}");
+                    self.current = Some(focus);
+                    return;
+                }
+                warn!("Id was not found in registry: {focus}");
+            }
+            None => {
+                trace!("Set focus to None");
+                self.current = None;
+            }
         }
     }
 
@@ -90,6 +105,7 @@ impl FocusManager {
     ///
     /// If the currently focused ID is absent from the new list, focus resets
     /// to the first region in the new list.
+    #[instrument(skip(self, regions), level = "trace")]
     pub fn set_regions(&mut self, regions: impl IntoIterator<Item = FocusRegion>) {
         self.regions = regions.into_iter().collect();
         if self.current.is_none()
@@ -133,6 +149,7 @@ impl FocusManager {
     /// is at or past the far edge of the current region (no overlap in the
     /// primary axis).  Among valid candidates the one with the lowest
     /// [`navigation_score`] is chosen.
+    #[instrument(skip(self), level = "trace")]
     pub fn move_geometric(&mut self, direction: Direction2D) {
         let Some(current_id) = self.current.as_ref() else {
             return;

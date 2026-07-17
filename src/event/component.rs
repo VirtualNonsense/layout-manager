@@ -8,12 +8,21 @@ pub trait Event: Any + Send + Sync + std::fmt::Debug {
     fn event_name(&self) -> &'static str;
     fn box_clone(&self) -> Box<dyn Event>;
     fn as_any(&self) -> &dyn Any;
+    fn into_any(self: Box<Self>) -> Box<dyn Any + Send + Sync>;
 }
 
 impl dyn Event {
     /// Tries to downcast a `dyn Event` to a concrete type.
     pub fn downcast_ref<T: Event + 'static>(&self) -> Option<&T> {
         self.as_any().downcast_ref::<T>()
+    }
+    pub fn downcast_to<T: Event + 'static>(self: Box<Self>) -> Option<T> {
+        if self.as_any().is::<T>() {
+            let box_t = self.into_any().downcast::<T>().ok()?;
+            Some(*box_t)
+        } else {
+            None
+        }
     }
 }
 
@@ -57,6 +66,9 @@ macro_rules! new_event {
             fn as_any(&self) -> &dyn ::std::any::Any {
                 self
             }
+            fn into_any(self: Box<Self>) -> Box<dyn ::std::any::Any + ::core::marker::Send + ::core::marker::Sync> {
+                self
+            }
         }
     };
 
@@ -73,6 +85,9 @@ macro_rules! new_event {
                 Box::new(self.clone())
             }
             fn as_any(&self) -> &dyn ::std::any::Any {
+                self
+            }
+            fn into_any(self: Box<Self>) -> Box<dyn ::std::any::Any + ::core::marker::Send + ::core::marker::Sync> {
                 self
             }
         }
@@ -93,6 +108,9 @@ macro_rules! new_event {
                 Box::new(self.clone())
             }
             fn as_any(&self) -> &dyn ::std::any::Any {
+                self
+            }
+            fn into_any(self: Box<Self>) -> Box<dyn ::std::any::Any + ::core::marker::Send + ::core::marker::Sync> {
                 self
             }
         }
@@ -119,6 +137,9 @@ macro_rules! new_event {
                 Box::new(self.clone())
             }
             fn as_any(&self) -> &dyn ::std::any::Any {
+                self
+            }
+            fn into_any(self: Box<Self>) -> Box<dyn ::std::any::Any + ::core::marker::Send + ::core::marker::Sync> {
                 self
             }
         }

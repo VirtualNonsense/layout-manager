@@ -6,9 +6,12 @@
 //! `UiAction::App(AppCommand::Quit)` into `EventContainer::Quit`).
 
 use crate::event::{EventContainer, EventHandler};
+use crate::log::LogEntry;
+use crate::ui::component::content::ContentComponentEvent;
 use crate::ui::{AppCommand, Ui, UiAction};
 use crossterm::event::{Event as CrosstermEvent, KeyEvent, KeyEventKind, MouseEvent};
 use ratatui::{DefaultTerminal, Frame};
+use tracing::error;
 
 /// Top-level application state.
 ///
@@ -68,6 +71,11 @@ impl App {
                 }
                 EventContainer::Crossterm(_) => {}
                 EventContainer::ComponentEvent(_component_event) => todo!(),
+                EventContainer::FetchLogs { origin, amount } => {
+                    let logs = self.fetch_logs(amount).await;
+                    let event = Box::new(ContentComponentEvent::NewLogs(logs));
+                    self.ui.dispatch_event_for_component(origin, event);
+                }
             }
         }
 
@@ -98,6 +106,9 @@ impl App {
         for action in actions {
             match action {
                 UiAction::App(AppCommand::Quit) => self.events.send(EventContainer::Quit),
+                UiAction::App(AppCommand::FetchLogs { origin, amount }) => self
+                    .events
+                    .send(EventContainer::FetchLogs { origin, amount }),
                 UiAction::Response(event) => {
                     let result = self
                         .ui
@@ -121,5 +132,27 @@ impl App {
     /// current iteration.
     pub fn quit(&mut self) {
         self.running = false;
+    }
+
+    async fn fetch_logs(&mut self, amount: usize) -> Vec<LogEntry> {
+        let logs = tokio::spawn(async move {
+            let result = crate::log::tail_log_entries(amount);
+            match result {
+                Ok(iter) => iter.collect::<Vec<LogEntry>>(),
+                Err(e) => {
+                    error!("Unable to fetch logs due to {e}");
+                    vec![]
+                }
+            }
+        })
+        .await;
+
+        match logs {
+            Ok(values) => values,
+            Err(e) => {
+                error!("Unable to fetch logs due to {e}");
+                vec![]
+            }
+        }
     }
 }
