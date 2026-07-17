@@ -245,6 +245,7 @@ impl InputManager {
     /// Add a global key binding.
     #[instrument(skip(self), level = "trace")]
     pub fn bind_app_event(&mut self, code: KeyCode, modifiers: KeyModifiers, command: Command) {
+        trace!("bound {:?} to {} with {} for app", command, code, modifiers);
         self.key_app.insert(KeyStroke { code, modifiers }, command);
     }
 
@@ -257,6 +258,10 @@ impl InputManager {
         modifiers: KeyModifiers,
         command: Command,
     ) {
+        trace!(
+            "bound {:?} to {} with {} for {}",
+            command, code, modifiers, component
+        );
         self.key_component
             .entry(component)
             .or_default()
@@ -266,6 +271,8 @@ impl InputManager {
     /// Add a global pointer gesture binding.
     #[instrument(skip(self), level = "trace")]
     pub fn bind_pointer_app_event(&mut self, gesture: PointerGesture, binding: PointerBinding) {
+        trace!("bound {:?} to {:?}  for app", binding, gesture);
+        trace!("bound {binding:?} to {gesture:?} for the entire app");
         self.pointer_app.insert(gesture, binding);
     }
 
@@ -277,6 +284,7 @@ impl InputManager {
         gesture: PointerGesture,
         binding: PointerBinding,
     ) {
+        trace!("bound {:?} to {:?} for {}", binding, gesture, component);
         self.pointer_component
             .entry(component)
             .or_default()
