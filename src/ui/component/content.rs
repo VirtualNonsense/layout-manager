@@ -9,7 +9,6 @@ use ratatui::{
     style::{Color, Stylize},
     widgets::Paragraph,
 };
-use tracing::trace;
 use uuid::Uuid;
 
 use crate::{
@@ -140,10 +139,9 @@ impl Component for ContentComponent {
                      Alt+Pfeile         Geometrische Fokus-Navigation\n\
                      Menu: ↑/↓ + click  Stateful ListState\n\
                      Content: ←/→       Counter ändern\n\
-                     Focus: {}\n\
                      click_text: {}\n\
                      mode: {}",
-                    ctx.focus_id, click_text, self.state,
+                    click_text, self.state,
                 );
                 let paragraph = Paragraph::new(text)
                     .block(focused_block("Help View", ctx.focused))
@@ -213,7 +211,6 @@ impl Component for ContentComponent {
 
         match event.downcast_to::<ContentComponentEvent>() {
             Ok(c) => {
-                trace!("handling {}", c.event_name());
                 match c {
                     ContentComponentEvent::ContentMode(content_mode) => self.state = content_mode,
                     ContentComponentEvent::NewLogs(logs) => {
