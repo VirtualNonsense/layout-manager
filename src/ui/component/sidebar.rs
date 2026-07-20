@@ -60,13 +60,17 @@ impl SidebarComponent {
         self.state.select(Some(selected.saturating_sub(1)));
     }
 
-    fn click(&mut self, event: &PointerEvent) {
+    /// simple click handler.
+    /// will return true if an items was hit.
+    fn click(&mut self, event: &PointerEvent) -> bool {
         if let Some(local_y) = event.local_y {
             let index = local_y.saturating_sub(1) as usize;
             if index < self.items.len() {
                 self.state.select(Some(index));
+                return true;
             }
         }
+        false
     }
 
     fn get_selected(&self) -> ContentMode {
@@ -117,11 +121,12 @@ impl Component for SidebarComponent {
                 PointerGesture::ScrollUp => self.select_previous(),
                 PointerGesture::ScrollDown => self.select_next(),
                 PointerGesture::Down(_) => {
-                    self.click(pointer);
-                    let selected = self.get_selected();
-                    return EventOutcome::Consumed(vec![UiAction::Response(Box::new(
-                        ContentComponentEvent::ContentMode(selected),
-                    ))]);
+                    if self.click(pointer) {
+                        let selected = self.get_selected();
+                        return EventOutcome::Consumed(vec![UiAction::Response(Box::new(
+                            ContentComponentEvent::ContentMode(selected),
+                        ))]);
+                    }
                 }
 
                 _ => return EventOutcome::Ignored(event),
