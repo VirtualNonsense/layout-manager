@@ -27,7 +27,7 @@ const TICK_FPS: f64 = 30.0;
 pub enum EventContainer {
     /// Periodic timer tick at [`TICK_FPS`] Hz.  Used to drive animations or
     /// time-based state updates.
-    Tick,
+    Tick(Duration),
 
     /// Requests a clean application shutdown.
     Quit,
@@ -100,7 +100,8 @@ impl EventTask {
     }
 
     async fn run(self) -> color_eyre::Result<()> {
-        let tick_rate = Duration::from_secs_f64(1.0 / TICK_FPS);
+        let secs = 1.0 / TICK_FPS;
+        let tick_rate = Duration::from_secs_f64(secs);
         let mut reader = crossterm::event::EventStream::new();
         let mut tick = tokio::time::interval(tick_rate);
 
@@ -110,7 +111,7 @@ impl EventTask {
 
             tokio::select! {
                 _ = self.sender.closed() => break,
-                _ = tick_delay => self.send(EventContainer::Tick),
+                _ = tick_delay => self.send(EventContainer::Tick(tick_rate)),
                 Some(Ok(evt)) = crossterm_event => self.send(EventContainer::Crossterm(evt)),
             };
         }

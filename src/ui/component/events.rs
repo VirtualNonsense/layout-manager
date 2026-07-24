@@ -5,6 +5,7 @@
 
 use crate::new_event;
 use crate::ui::command::{Direction2D, PointerEvent};
+use std::time::Duration;
 
 new_event!(MoveEvent, Direction2D);
 
@@ -12,4 +13,4 @@ new_event!(Submit);
 
 new_event!(MouseEvent, PointerEvent);
 
-new_event!(Tick);
+new_event!(Tick, Duration);

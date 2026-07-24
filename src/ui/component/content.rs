@@ -1,7 +1,8 @@
 //! Content component — the main right-hand pane.
 
-use std::default::Default;
 use std::fmt::Display;
+use std::time::Duration;
+use std::{default::Default, time::Instant};
 
 use ratatui::{
     Frame,
@@ -78,6 +79,8 @@ pub struct ContentComponent {
     option_log_list_state: Option<WidgetListState>,
     log_entries: usize,
     current_logs: Option<Vec<LogEntry>>,
+    last_update: Option<Instant>,
+    update_interval: Duration,
 }
 
 impl Default for ContentComponent {
@@ -97,6 +100,8 @@ impl ContentComponent {
             option_log_list_state: None,
             log_entries: 400,
             current_logs: None,
+            last_update: None,
+            update_interval: Duration::from_secs_f32(1.0),
         }
     }
 }
@@ -170,14 +175,25 @@ impl Component for ContentComponent {
         };
     }
 
-    fn on(&mut self, event: Box<dyn Event>) -> EventOutcome {
-        if let Some(Tick) = event.downcast_ref::<Tick>()
-            && matches!(self.state, ContentMode::Logs)
-        {
-            return EventOutcome::Consumed(vec![UiAction::App(crate::ui::AppCommand::FetchLogs {
-                origin: self.id,
-                amount: self.log_entries,
-            })]);
+    fn on(&mut self, mut event: Box<dyn Event>) -> EventOutcome {
+        if matches!(self.state, ContentMode::Logs) {
+            match event.downcast_to::<Tick>() {
+                Ok(Tick(delta)) => {
+                    if let Some(last_update) = self.last_update
+                        && Instant::now() < (last_update + self.update_interval)
+                    {
+                        return EventOutcome::Ignored(Box::new(Tick(delta)));
+                    }
+
+                    return EventOutcome::Consumed(vec![UiAction::App(
+                        crate::ui::AppCommand::FetchLogs {
+                            origin: self.id,
+                            amount: self.log_entries,
+                        },
+                    )]);
+                }
+                Err(other_event) => event = other_event,
+            }
         }
 
         let delta = if let Some(MoveEvent(direction)) = event.downcast_ref::<MoveEvent>() {
@@ -215,6 +231,7 @@ impl Component for ContentComponent {
                     ContentComponentEvent::ContentMode(content_mode) => self.state = content_mode,
                     ContentComponentEvent::NewLogs(logs) => {
                         self.current_logs = Some(logs);
+                        self.last_update.replace(Instant::now());
                     }
                 }
                 EventOutcome::Consumed(vec![])

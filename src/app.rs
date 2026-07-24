@@ -5,6 +5,8 @@
 //! values back into [`EventContainer`] messages (e.g. converting
 //! `UiAction::App(AppCommand::Quit)` into `EventContainer::Quit`).
 
+use std::time::Duration;
+
 use crate::event::{EventContainer, EventHandler};
 use crate::log::LogEntry;
 use crate::ui::command::Command;
@@ -61,8 +63,8 @@ impl App {
             terminal.draw(|frame| self.render(frame))?;
 
             match self.events.next().await? {
-                EventContainer::Tick => {
-                    let result = self.tick();
+                EventContainer::Tick(delta) => {
+                    let result = self.tick(delta);
                     self.apply_actions(result);
                 }
                 EventContainer::Quit => self.quit(),
@@ -132,8 +134,8 @@ impl App {
     }
 
     /// Called on every tick event. Reserved for time-driven updates.
-    pub fn tick(&mut self) -> Vec<UiAction> {
-        self.ui.dispatch(Command::BroadCast(Box::new(Tick)))
+    pub fn tick(&mut self, delta: Duration) -> Vec<UiAction> {
+        self.ui.dispatch(Command::BroadCast(Box::new(Tick(delta))))
     }
 
     /// Set `running` to `false`, causing the main loop to exit after the
