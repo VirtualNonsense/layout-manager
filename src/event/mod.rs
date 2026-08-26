@@ -17,7 +17,11 @@ use futures::{FutureExt, StreamExt};
 use std::{fmt::Debug, time::Duration};
 use tokio::sync::mpsc;
 
-use crate::{event::component::Event, ui::ComponentId};
+use crate::{
+    data_source::{end_points::brightsky::{Location, Temperature}, services::weather::{WeatherService, WeatherServiceConfig}},
+    event::component::Event,
+    ui::ComponentId,
+};
 
 /// Target render / tick rate in frames per second.
 const TICK_FPS: f64 = 30.0;
@@ -57,8 +61,9 @@ impl EventHandler {
     /// Create a new handler and spawn the background [`EventTask`].
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::unbounded_channel();
-        let actor = EventTask::new(sender.clone());
-        tokio::spawn(async { actor.run().await });
+        let system_tasks = SystemEventTask::new(sender.clone());
+        let weather_tasks = WeatherEventHandler::new(sender.clone());
+        tokio::spawn(async { system_tasks.run().await });
         Self { sender, receiver }
     }
 
@@ -85,16 +90,34 @@ impl Default for EventHandler {
     }
 }
 
+struct WeatherEventHandler {
+    sender: mpsc::UnboundedSender<EventContainer>,
+    temperature_service: WeatherService<Temperature>,
+}
+impl WeatherEventHandler {
+    fn new(sender: mpsc::UnboundedSender<EventContainer>) -> Self {
+        Self { sender, WeatherService::with_default_client(WeatherServiceConfig::new(Location::DwdStation(""))) }
+    }
+
+    async fn run(self) -> color_eyre::Result<()> {
+        loop {
+            tokio::select! {
+                _ = self.sender.closed() => break,
+            }
+        }
+        Ok(())
+    }
+}
 /// Background Tokio task that produces [`EventContainer`] values.
 ///
 /// Selects over a crossterm [`EventStream`](crossterm::event::EventStream) and
 /// a periodic tick timer, forwarding events to the shared channel.  Exits
 /// cleanly when the receiver side of the channel is dropped.
-struct EventTask {
+struct SystemEventTask {
     sender: mpsc::UnboundedSender<EventContainer>,
 }
 
-impl EventTask {
+impl SystemEventTask {
     fn new(sender: mpsc::UnboundedSender<EventContainer>) -> Self {
         Self { sender }
     }

@@ -36,7 +36,7 @@ impl<'a, W: Widget + Clone> WidgetList<'a, W> {
 ///
 /// # Examples
 ///
-/// ```
+/// ```rust,ignore
 /// let mut state = WidgetListState::new();
 /// state.select_first(items.len());
 /// state.select_next(items.len());
