@@ -1,42 +1,66 @@
 //! Central UI coordinator.
 //!
-//! [`Ui`] ties together all UI sub-systems: the layout tree, focus management,
-//! input resolution, and the component registry.  On every frame it recomputes
-//! the laid-out regions, updates focus, and renders each component.  Incoming
-//! key and mouse events are resolved to [`Command`] values and dispatched
-//! through [`dispatch`](Ui::dispatch_to_focused_component).
+//! [`Ui`] ties together layout, focus management, input resolution, and the
+//! component registry.
+//!
+//! There are two dispatch paths:
+//!
+//! - [`Ui::dispatch_command`] processes internal input-routing commands.
+//! - [`Ui::dispatch_event`] processes owned application event envelopes.
 
 pub mod builder;
-pub mod command;
 pub mod component;
-pub mod focus;
-pub mod input;
-pub mod layout;
 pub mod widget;
 
-use crate::event::component::Event;
+use crate::event::{Event, EventEnvelope, EventMetadata};
 use crate::ui::builder::UiBuilder;
-use crate::ui::command::{Command, FocusCommand, PointerEvent};
-use crate::ui::component::{
-    Component, ComponentKind, ComponentRegistry, ContentComponent, EventOutcome, RenderContext,
-    SidebarComponent,
+use crate::ui::component::content::MainView;
+use crate::ui::component::log_view::LogView;
+use crate::ui::component::shortcut_view::ShortCutView;
+use crate::ui_lib::command::{Command, FocusCommand, PointerEvent};
+use crate::ui_lib::component::{
+    Component, ComponentId, ComponentKind, EventOutcome, RenderContext,
 };
-use crate::ui::focus::{FocusManager, FocusRegion};
-use crate::ui::input::InputManager;
-use crate::ui::layout::{LaidOutRegion, LayoutSpec};
+use crate::ui_lib::component_registry::ComponentRegistry;
+use crate::ui_lib::focus::{FocusManager, FocusRegion};
+use crate::ui_lib::input::InputManager;
+use crate::ui_lib::layout::{LaidOutRegion, LayoutSpec};
+
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Rect},
 };
 use tracing::{instrument, trace};
 
-pub use crate::ui::command::{AppCommand, Direction2D, UiAction};
-pub use crate::ui::layout::ComponentId;
+/// Envelope-aware result of dispatching an application event into the UI.
+pub enum UiEventOutcome {
+    /// No component consumed the event.
+    ///
+    /// The complete envelope is returned so that the caller retains the
+    /// original payload and metadata.
+    Ignored(EventEnvelope),
 
-/// The full UI tree: layout, focus, input bindings, and component instances.
-///
-/// Construct via [`Ui::builder()`] (validated) or [`Ui::default_ui()`] (the
-/// built-in two-pane demo).
+    /// A component consumed the event.
+    ///
+    /// The original metadata remains available for constructing reaction
+    /// envelopes.
+    Consumed {
+        cause: EventMetadata,
+        reactions: Vec<Box<dyn Event>>,
+    },
+}
+
+impl UiEventOutcome {
+    pub fn ignored(envelope: EventEnvelope) -> Self {
+        Self::Ignored(envelope)
+    }
+
+    pub fn consumed(cause: EventMetadata, reactions: Vec<Box<dyn Event>>) -> Self {
+        Self::Consumed { cause, reactions }
+    }
+}
+
+/// Full UI tree containing layout, focus, input bindings, and components.
 pub struct Ui {
     layout: LayoutSpec,
     components: ComponentRegistry,
@@ -45,38 +69,46 @@ pub struct Ui {
 }
 
 impl Ui {
-    /// Return a fresh [`UiBuilder`].
+    /// Returns a fresh [`UiBuilder`].
     pub fn builder() -> UiBuilder {
         UiBuilder::default()
     }
 
-    /// Build the built-in two-pane demo UI (sidebar + content).
+    /// Builds the built-in two-pane UI.
     pub fn default_ui() -> color_eyre::Result<Self> {
-        let sidebar_component = SidebarComponent::new();
-        let content_component = ContentComponent::new();
+        let log_view = LogView::new();
+        let short_cut_view = ShortCutView::default();
+        let content_component = MainView::new();
+
         Self::builder()
-            .initial_focus(sidebar_component.id())
+            .initial_focus(short_cut_view.id())
             .layout(LayoutSpec::split(
-                Direction::Horizontal,
+                Direction::Vertical,
                 vec![
                     (
-                        Constraint::Length(28),
-                        LayoutSpec::leaf(sidebar_component.id()),
-                    ),
-                    (
                         Constraint::Min(20),
-                        LayoutSpec::leaf(content_component.id()),
+                        // LayoutSpec::leaf(content_component.id()),
+                        LayoutSpec::split(
+                            Direction::Horizontal,
+                            vec![
+                                (Constraint::Fill(1), LayoutSpec::leaf(short_cut_view.id())),
+                                (
+                                    Constraint::Percentage(50),
+                                    LayoutSpec::leaf(content_component.id()),
+                                ),
+                            ],
+                        ),
                     ),
+                    (Constraint::Max(10), LayoutSpec::leaf(log_view.id())),
                 ],
             ))
-            .component(sidebar_component)
             .component(content_component)
+            .component(short_cut_view)
+            .component(log_view)
             .build()
     }
 
-    /// Construct `Ui` directly from its constituent parts.
-    ///
-    /// Intended for use by [`UiBuilder`] only.
+    /// Constructs `Ui` directly from its constituent parts.
     pub(crate) fn from_parts(
         layout: LayoutSpec,
         components: ComponentRegistry,
@@ -91,9 +123,7 @@ impl Ui {
         }
     }
 
-    /// Recompute the layout, update focus regions, and render all components.
-    ///
-    /// Called once per frame by `App`.
+    /// Recomputes layout, updates focus regions, and renders components.
     #[instrument(skip(self), level = "trace")]
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         let regions = self.layout.compute(area);
@@ -101,122 +131,200 @@ impl Ui {
 
         for region in regions {
             let focused = self.focus.current() == Some(region.focus);
-            let ctx = RenderContext {
+            let focused_kind: Option<ComponentKind> = self
+                .focus
+                .current()
+                .and_then(|id| self.components.get_kind(&id));
+
+            let context = RenderContext {
                 focused,
                 focus_id: &region.focus,
+                manager: &self.input,
+                focused_kind,
             };
+
             self.components
-                .render(&region.component, frame, region.rect, ctx);
+                .render(&region.component, frame, region.rect, context)
         }
     }
 
-    /// Resolve a key event to a [`Command`] and dispatch it.
-    ///
-    /// Returns any [`UiAction`] values that `App` must act on.
+    /// Resolves a keyboard input event and dispatches the resulting command.
     #[instrument(skip(self), level = "trace")]
-    pub fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> Vec<UiAction> {
+    pub fn handle_key_event(&mut self, key: crossterm::event::KeyEvent) -> Vec<Box<dyn Event>> {
         let Some(command) = self.input.resolve_key(key, self.get_focused_kind()) else {
-            return vec![];
+            return Vec::new();
         };
 
-        self.dispatch(command)
+        self.dispatch_command(command)
     }
 
-    /// Resolve a mouse event to a [`Command`] and dispatch it.
-    ///
-    /// A `Down` gesture on any component also transfers focus to that component
-    /// before the command is dispatched.  The hovered component (determined by
-    /// hit-testing) is used for pointer binding resolution, not the keyboard
-    /// focus.
+    /// Resolves a mouse event and dispatches the resulting command.
     #[instrument(skip(self), level = "trace")]
-    pub fn handle_mouse_event(&mut self, mouse: crossterm::event::MouseEvent) -> Vec<UiAction> {
+    pub fn handle_mouse_event(
+        &mut self,
+        mouse: crossterm::event::MouseEvent,
+    ) -> Vec<Box<dyn Event>> {
         let hit = self.focus.region_at(mouse.column, mouse.row).cloned();
 
-        // Click-to-focus is runtime behavior, not a component binding.
         if let Some(region) = hit.as_ref()
             && PointerEvent::is_focus_event(mouse.kind)
         {
             self.focus.set_current(Some(region.focus));
         }
 
-        let pointer = PointerEvent::from_mouse_event(mouse, hit.as_ref().map(|r| r.rect));
+        let pointer = PointerEvent::from_mouse_event(mouse, hit.as_ref().map(|region| region.rect));
+
         let hovered = self.get_hovered_kind(hit);
 
         let Some(command) = self.input.resolve_pointer(pointer, hovered) else {
-            trace!("resolve_pointer return None");
-            return vec![];
+            trace!("pointer input did not resolve to a command");
+            return Vec::new();
         };
 
-        self.dispatch(command)
+        self.dispatch_command(command)
     }
 
-    /// Dispatch a resolved [`Command`] to the appropriate sub-system.
+    /// Dispatches an internal UI command.
+    ///
+    /// Returned events are reactions to the input event that produced the
+    /// command. `App` is responsible for placing them into `EventQueue`.
     #[instrument(skip(self), level = "trace")]
-    pub fn dispatch(&mut self, command: Command) -> Vec<UiAction> {
+    pub fn dispatch_command(&mut self, command: Command) -> Vec<Box<dyn Event>> {
         match command {
-            Command::App(cmd) => vec![UiAction::App(cmd)],
-            Command::Focus(FocusCommand::Move(dir)) => {
-                self.focus.move_geometric(dir);
-                vec![]
+            Command::App(event) => {
+                vec![event]
             }
+
+            Command::Focus(FocusCommand::Move(direction)) => {
+                self.focus.move_geometric(direction);
+                Vec::new()
+            }
+
             Command::Focus(FocusCommand::Next) => {
                 self.focus.next();
-                vec![]
+                Vec::new()
             }
+
             Command::Focus(FocusCommand::Previous) => {
                 self.focus.previous();
-                vec![]
+                Vec::new()
             }
+
             Command::FocusedComponent(event) => self.dispatch_to_focused_component(event),
+
             Command::BroadCast(event) => self.broadcast_event(event),
+
             Command::BroadCastTillConsumed(event) => self.broadcast_event_till_consumed(event),
         }
     }
 
+    /// Dispatches an event received from the central event queue.
+    ///
+    /// The metadata remains outside the component layer. Only the
+    /// `Box<dyn Event>` payload is offered to components.
+    ///
+    /// Application events use first-consumer routing by default, allowing a
+    /// component to move fields such as `Vec<T>` out without cloning.
+    #[instrument(skip(self), level = "trace")]
+    pub fn dispatch_event(&mut self, envelope: EventEnvelope) -> UiEventOutcome {
+        let EventEnvelope { metadata, event } = envelope;
+        let event_name = event.event_name();
+
+        trace!(
+            event = event_name,
+            event_id = metadata.id().get(),
+            root_id = metadata.root_id().get(),
+            depth = metadata.depth(),
+            "dispatching queued event through UI"
+        );
+
+        match self.components.on_broadcast_till_consumed(event) {
+            EventOutcome::Ignored(event) => {
+                trace!(
+                    event = event_name,
+                    event_id = metadata.id().get(),
+                    root_id = metadata.root_id().get(),
+                    "queued event was ignored by UI"
+                );
+
+                UiEventOutcome::Ignored(EventEnvelope::from_parts(metadata, event))
+            }
+
+            EventOutcome::Consumed(reactions) => {
+                trace!(
+                    event = event_name,
+                    event_id = metadata.id().get(),
+                    root_id = metadata.root_id().get(),
+                    reaction_count = reactions.len(),
+                    "queued event was consumed by UI"
+                );
+
+                UiEventOutcome::Consumed {
+                    cause: metadata,
+                    reactions,
+                }
+            }
+        }
+    }
+
+    /// Dispatches an owned event to one component.
+    #[instrument(skip(self))]
     pub fn dispatch_event_for_component(
         &mut self,
         id: ComponentId,
         event: Box<dyn Event>,
-    ) -> Vec<UiAction> {
-        match self.components.on(&id, event) {
-            EventOutcome::Ignored(_event) => vec![],
-            EventOutcome::Consumed(actions) => actions,
+    ) -> EventOutcome {
+        self.components.on(&id, event)
+    }
+
+    /// Routes an event to the currently focused component.
+    #[instrument(skip(self), level = "trace")]
+    fn dispatch_to_focused_component(&mut self, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+        let Some(id) = self.focus.focused_component() else {
+            trace!(
+                event = event.event_name(),
+                "cannot dispatch event because no component is focused"
+            );
+
+            return Vec::new();
+        };
+
+        let event_name = event.event_name();
+
+        trace!(
+            component_id = %id,
+            event = event_name,
+            "dispatching event to focused component"
+        );
+
+        match self.dispatch_event_for_component(id, event) {
+            EventOutcome::Ignored(_) => {
+                trace!(
+                    component_id = %id,
+                    event = event_name,
+                    "focused component ignored event"
+                );
+
+                Vec::new()
+            }
+
+            EventOutcome::Consumed(reactions) => reactions,
         }
     }
 
-    /// Route a `ComponentCommand` to the currently focused component.
-    ///
-    /// Mouse-originated `ComponentCommand::Pointer` events are routed to the hovered component via
-    /// `resolve_pointer` in `handle_mouse_event` — by the time we get here, the focused
-    /// component is already correct (click-to-focus happened above).
+    /// Offers an event to components until one consumes it.
     #[instrument(skip(self), level = "trace")]
-    fn dispatch_to_focused_component(&mut self, event: Box<dyn Event>) -> Vec<UiAction> {
-        let Some(id) = self.focus.focused_component() else {
-            trace!("no focused component: {}", event.event_name());
-            return vec![];
-        };
-        trace!("{}: {}", id, event.event_name());
-        self.dispatch_event_for_component(id, event)
+    fn broadcast_event_till_consumed(&mut self, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+        match self.components.on_broadcast_till_consumed(event) {
+            EventOutcome::Ignored(_) => Vec::new(),
+            EventOutcome::Consumed(reactions) => reactions,
+        }
     }
 
+    /// Clones an event and broadcasts it to every component.
     #[instrument(skip(self), level = "trace")]
-    fn broadcast_event_till_consumed(&mut self, event: Box<dyn Event>) -> Vec<UiAction> {
-        self.components.on_broadcast_till_consumed(event)
-    }
-
-    #[instrument(skip(self), level = "trace")]
-    /// Broadcast an event to all components.
-    /// This will clone the event each time.
-    fn broadcast_event(&mut self, event: Box<dyn Event>) -> Vec<UiAction> {
-        self.components
-            .on_broadcast_cloned(event)
-            .flat_map(|event_outcome| match event_outcome {
-                EventOutcome::Ignored(_event) => {
-                    vec![]
-                }
-                EventOutcome::Consumed(ui_actions) => ui_actions,
-            })
-            .collect()
+    fn broadcast_event(&mut self, event: Box<dyn Event>) -> Vec<Box<dyn Event>> {
+        self.components.on_broadcast_cloned(event)
     }
 
     #[instrument(skip(self), level = "trace")]
@@ -237,7 +345,7 @@ impl Ui {
         })
     }
 
-    #[instrument(skip(self), level = "trace")]
+    #[instrument(skip(self, regions), level = "trace")]
     fn update_focus_regions(&mut self, regions: &[LaidOutRegion]) {
         self.focus
             .set_regions(regions.iter().map(|region| FocusRegion {

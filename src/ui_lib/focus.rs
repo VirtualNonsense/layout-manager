@@ -7,8 +7,8 @@
 //! Focus regions are updated on every frame from the output of
 //! [`LayoutSpec::compute`](crate::ui::layout::LayoutSpec::compute).
 
-use crate::ui::command::Direction2D;
-use crate::ui::layout::ComponentId;
+use crate::ui_lib::command::Direction2D;
+use crate::ui_lib::component::ComponentId;
 use ratatui::layout::Rect;
 use tracing::{Level, instrument, trace, warn};
 

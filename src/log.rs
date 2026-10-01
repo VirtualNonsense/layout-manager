@@ -8,6 +8,7 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
+use serde_json::{Map, Value};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::EnvFilter;
@@ -15,12 +16,15 @@ use tracing_subscriber::EnvFilter;
 const CRATE_NAME: &str = env!("CARGO_PKG_NAME");
 
 /// Holds resources that must stay alive for the duration of the program.
+///
 /// If this is dropped, the non-blocking writer will stop flushing logs.
 pub struct LoggingGuard {
     _worker_guard: WorkerGuard,
 }
 
-/// Returns the log directory: ~/.local/<CRATE_NAME>/logs
+/// Returns the log directory:
+///
+/// `~/.local/<CRATE_NAME>/logs`
 fn log_dir() -> PathBuf {
     std::env::home_dir()
         .expect("could not determine home directory")
@@ -31,33 +35,31 @@ fn log_dir() -> PathBuf {
 
 /// Initializes the global tracing subscriber.
 ///
-/// - Filtering is controlled by the `RUST_LOG` env var (falls back to `trace` if unset).
-/// - Logs are written to daily-rotating files in `~/.local/<CRATE_NAME>/logs`.
-/// - Output is **line-delimited JSON**: one self-describing object per line,
-///   so it can be parsed losslessly via [`tail_log_entries`].
+/// - Filtering is controlled by the `RUST_LOG` environment variable.
+/// - The default filter is `trace`.
+/// - Logs are written to daily rotating files.
+/// - At most 14 log files are retained.
+/// - Every log event is written as line-delimited JSON.
 ///
-/// Returns a guard that must be kept alive for the lifetime of the program.
+/// The returned guard must be kept alive for the lifetime of the program.
 pub fn init_logging() -> io::Result<LoggingGuard> {
     let dir = log_dir();
-    std::fs::create_dir_all(&dir)?;
+    fs::create_dir_all(&dir)?;
 
     let file_appender = RollingFileAppender::builder()
         .rotation(Rotation::DAILY)
         .filename_prefix(format!("{CRATE_NAME}.log"))
         .max_log_files(14)
         .build(&dir)
-        .expect("failed to initialize rolling file appender");
+        .map_err(io::Error::other)?;
 
     let (non_blocking, worker_guard) = tracing_appender::non_blocking(file_appender);
 
     let env_filter =
-        EnvFilter::try_from_env("RUST_LOG").unwrap_or_else(|_| EnvFilter::new("trace"));
+        EnvFilter::try_from_env("RUST_LOG").unwrap_or_else(|_| EnvFilter::new("debug"));
 
     tracing_subscriber::fmt()
         .json()
-        // Keep the active span chain, but as structured data — not folded
-        // into the message. We intentionally do NOT enable `with_span_events`,
-        // so every emitted line is a real event that maps 1:1 to a `LogEntry`.
         .with_current_span(true)
         .with_span_list(true)
         .with_env_filter(env_filter)
@@ -82,7 +84,7 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    /// A fixed-width, uppercase label for the level (nice for column alignment).
+    /// Returns a fixed-width uppercase label.
     pub const fn label(self) -> &'static str {
         match self {
             LogLevel::Trace => "TRACE",
@@ -95,162 +97,230 @@ impl LogLevel {
 }
 
 impl std::fmt::Display for LogLevel {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.label())
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.label())
     }
 }
 
-/// A single parsed log event.
-#[derive(Debug, Clone)]
+/// A tracing span that was active when an event was emitted.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LogSpan {
+    /// Name of the span.
+    pub name: String,
+
+    /// Structured fields attached to the span.
+    pub fields: Map<String, Value>,
+}
+
+/// A single parsed tracing log event.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LogEntry {
     /// When the event was recorded.
     pub timestamp: DateTime<Utc>,
-    /// Severity level.
+
+    /// Severity level of the event.
     pub level: LogLevel,
-    /// The human-readable message text.
+
+    /// Human-readable message.
     pub message: String,
-    /// Names of the spans that were active when the event fired,
-    /// outermost first. Empty if the event fired outside any span.
-    pub spans: Vec<String>,
+
+    /// Structured event fields excluding `message`.
+    pub fields: Map<String, Value>,
+
+    /// Tracing target, usually the Rust module path.
+    pub target: String,
+
+    /// Active spans, ordered outermost first.
+    pub spans: Vec<LogSpan>,
 }
 
-/// Mirrors the shape tracing-subscriber's JSON formatter emits. Only the
-/// fields we care about are pulled out; everything else is ignored.
+/// Mirrors the relevant portions of tracing-subscriber's JSON output.
 #[derive(Deserialize)]
 struct RawLogLine {
     timestamp: String,
     level: LogLevel,
+
     #[serde(default)]
-    fields: RawFields,
-    /// The list of active spans, outermost first. Present when
-    /// `with_span_list(true)` is set.
+    fields: Map<String, Value>,
+
+    #[serde(default)]
+    target: String,
+
     #[serde(default)]
     spans: Vec<RawSpan>,
 }
 
-#[derive(Deserialize, Default)]
-struct RawFields {
-    /// tracing puts the log message under `fields.message`.
-    #[serde(default)]
-    message: String,
-}
-
+/// Raw representation of one active tracing span.
+///
+/// Any properties other than `name` are captured as structured span fields.
 #[derive(Deserialize)]
 struct RawSpan {
     #[serde(default)]
     name: String,
-    // Any span fields (key=value pairs) are captured by serde but ignored.
+
+    #[serde(flatten)]
+    fields: Map<String, Value>,
 }
 
 impl LogEntry {
-    /// Parse a single JSON log line into a [`LogEntry`].
+    /// Parses one JSON log line.
     ///
-    /// Returns `None` if the line isn't valid JSON in the expected shape
-    /// (e.g. a blank line, a partially-written tail, or output from a
-    /// different formatter).
-    fn parse(line: &str) -> Option<LogEntry> {
-        let raw: RawLogLine = serde_json::from_str(line).ok()?;
-        Some(LogEntry {
-            timestamp: DateTime::parse_from_rfc3339(&raw.timestamp)
-                .map(|dt| dt.with_timezone(&Utc))
-                .ok()?,
-            // skip lines with an unparseable timestamp,
+    /// Returns `None` when the input is not valid JSON in the expected
+    /// tracing-subscriber format. This includes blank lines and partially
+    /// written events.
+    fn parse(line: &str) -> Option<Self> {
+        let mut raw: RawLogLine = serde_json::from_str(line).ok()?;
+
+        let timestamp = DateTime::parse_from_rfc3339(&raw.timestamp)
+            .map(|timestamp| timestamp.with_timezone(&Utc))
+            .ok()?;
+
+        let message = raw
+            .fields
+            .remove("message")
+            .map(value_to_message)
+            .unwrap_or_default();
+
+        let spans = raw
+            .spans
+            .into_iter()
+            .map(|span| LogSpan {
+                name: span.name,
+                fields: span.fields,
+            })
+            .collect();
+
+        Some(Self {
+            timestamp,
             level: raw.level,
-            message: raw.fields.message,
-            spans: raw.spans.into_iter().map(|s| s.name).collect(),
+            message,
+            fields: raw.fields,
+            target: raw.target,
+            spans,
         })
     }
 }
 
-/// Returns the last `n` log entries across all rotated log files for this
-/// crate, newest-first — both across files (newest file first) and within
-/// each file (last line first).
+/// Converts a JSON value from the `message` field into readable text.
 ///
-/// This is fully lazy: files are opened and read one chunk at a time only
-/// as the returned iterator is advanced. Lines that fail to parse (blank
-/// lines, torn writes, etc.) are silently skipped and do **not** count
-/// against `n`, so you always get up to `n` real entries.
+/// tracing normally serializes the message as a string, but handling other
+/// JSON value types here makes the parser more tolerant.
+fn value_to_message(value: Value) -> String {
+    match value {
+        Value::String(message) => message,
+        other => other.to_string(),
+    }
+}
+
+/// Returns the last `n` valid log entries across all rotated log files.
+///
+/// Entries are returned newest first:
+///
+/// - Newer files are processed before older files.
+/// - Lines within each file are processed from bottom to top.
+///
+/// Invalid JSON lines and partially written lines are skipped and do not
+/// count toward `n`.
 pub fn tail_log_entries(n: usize) -> io::Result<impl Iterator<Item = LogEntry>> {
     Ok(tail_log_lines_raw()?
         .filter_map(|line| LogEntry::parse(&line))
         .take(n))
 }
 
-/// Shared, uncapped backward line iterator over all log files newest-first.
+/// Returns an uncapped backward line iterator over all log files.
 fn tail_log_lines_raw() -> io::Result<impl Iterator<Item = String>> {
     let dir = log_dir();
+
+    // Treat an application without any logs as an empty log directory.
+    fs::create_dir_all(&dir)?;
+
     let prefix = format!("{CRATE_NAME}.log.");
 
-    // Collect just the file *paths* sorted by mtime descending. We don't
-    // read any file contents here — that happens lazily below.
     let mut log_files: Vec<(SystemTime, PathBuf)> = fs::read_dir(&dir)?
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let path = entry.path();
-            let name = path.file_name()?.to_string_lossy().into_owned();
+
+            let name = path.file_name()?.to_string_lossy();
+
             if !name.starts_with(&prefix) {
                 return None;
             }
-            let mtime = entry.metadata().ok()?.modified().ok()?;
-            Some((mtime, path))
+
+            let modified = entry.metadata().ok()?.modified().ok()?;
+
+            Some((modified, path))
         })
         .collect();
 
-    log_files.sort_by_key(|b| std::cmp::Reverse(b.0));
+    log_files.sort_by_key(|entry| std::cmp::Reverse(entry.0));
 
-    // Chain a lazy tail-iterator for each file, newest file first.
-    let iter = log_files.into_iter().flat_map(|(_, path)| {
+    let iterator = log_files.into_iter().flat_map(|(_, path)| {
         TailLines::new(&path, usize::MAX)
             .into_iter()
             .flatten()
-            .filter_map(Result::ok)
+            .filter_map(|result| match result {
+                Ok(line) => Some(line),
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        "failed to read a line from log file",
+                    );
+                    None
+                }
+            })
     });
 
-    Ok(iter)
+    Ok(iterator)
 }
 
-/// Size of each backward read from the file, in bytes.
+/// Size of each backward file read, in bytes.
 const CHUNK_SIZE: u64 = 8192;
 
-/// A lazy iterator over the lines of a file, read from the end backwards.
+/// A lazy iterator over the lines of a file, reading from end to start.
 ///
-/// Yields lines in **newest-first** order (i.e. the last line of the file
-/// comes first). Reads the file in fixed-size chunks, scanning backwards,
-/// so it never needs to load the whole file into memory — only enough of
-/// the tail to satisfy the lines actually consumed.
+/// Lines are yielded newest first. The complete file is never loaded into
+/// memory. Only fixed-size pieces of the file and the current partial line
+/// are retained.
 pub struct TailLines {
-    /// The open file handle we're reading backwards from.
+    /// Open file being read.
     file: File,
-    /// Byte offset in the file up to which we've already consumed data.
-    /// The next chunk read (if any) will end exactly at this offset.
+
+    /// Byte offset at which the next backward read ends.
     pos: u64,
-    /// Bytes read from the file so far but not yet turned into a line.
-    /// Ordered the same as in the file (front = earliest byte in buffer).
+
+    /// Data read so far that has not yet been returned as a complete line.
     buffer: VecDeque<u8>,
-    /// True once we've read all the way back to the start of the file.
+
+    /// Whether the beginning of the file has been reached.
     reached_start: bool,
-    /// Number of lines still to be yielded before the iterator stops.
-    /// Use `usize::MAX` for "no limit" (read until start of file).
+
+    /// Maximum number of lines that can still be returned.
     remaining: usize,
+
+    /// Whether a trailing newline at the end of the file was already ignored.
+    ignored_trailing_newline: bool,
 }
 
 impl TailLines {
-    /// Opens `path` and prepares to yield up to `n` lines from the end of
-    /// the file, newest-first. No data is read until `next` is first called.
+    /// Opens a file and prepares to return up to `n` lines from its end.
+    ///
+    /// No file contents are read until `next` is called.
     pub fn new(path: &Path, n: usize) -> io::Result<Self> {
         let mut file = File::open(path)?;
         let pos = file.seek(SeekFrom::End(0))?;
+
         Ok(Self {
             file,
             pos,
             buffer: VecDeque::new(),
             reached_start: pos == 0,
             remaining: n,
+            ignored_trailing_newline: false,
         })
     }
 
-    /// Reads one more chunk of the file, immediately preceding the bytes
-    /// we've already buffered, and prepends it to `self.buffer`.
+    /// Reads the chunk immediately preceding the current buffer.
     fn fill_chunk(&mut self) -> io::Result<bool> {
         if self.pos == 0 {
             self.reached_start = true;
@@ -261,10 +331,11 @@ impl TailLines {
         self.pos -= read_size;
 
         self.file.seek(SeekFrom::Start(self.pos))?;
-        let mut chunk = vec![0u8; read_size as usize];
+
+        let mut chunk = vec![0_u8; read_size as usize];
         self.file.read_exact(&mut chunk)?;
 
-        for &byte in chunk.iter().rev() {
+        for byte in chunk.into_iter().rev() {
             self.buffer.push_front(byte);
         }
 
@@ -275,13 +346,23 @@ impl TailLines {
         Ok(true)
     }
 
-    /// Pops the trailing complete line out of `self.buffer`, if the buffer
-    /// currently ends in one. The trailing newline is discarded.
+    /// Removes and returns the last complete line in the buffer.
     fn take_trailing_line(&mut self) -> Option<String> {
-        let newline_idx = self.buffer.iter().rposition(|&b| b == b'\n')?;
-        let line_bytes: Vec<u8> = self.buffer.split_off(newline_idx + 1).into();
+        let newline_index = self.buffer.iter().rposition(|byte| *byte == b'\n')?;
+
+        let line_bytes: Vec<u8> = self.buffer.split_off(newline_index + 1).into();
+
+        // Remove the newline that remains at the end of the original buffer.
         self.buffer.pop_back();
-        Some(String::from_utf8_lossy(&line_bytes).into_owned())
+
+        // A normal text file commonly ends in '\n'. That delimiter does not
+        // represent an additional empty log entry.
+        if line_bytes.is_empty() && !self.ignored_trailing_newline {
+            self.ignored_trailing_newline = true;
+            return self.take_trailing_line();
+        }
+
+        Some(decode_line(line_bytes))
     }
 }
 
@@ -303,14 +384,28 @@ impl Iterator for TailLines {
                 if self.buffer.is_empty() {
                     return None;
                 }
+
                 let line_bytes: Vec<u8> = std::mem::take(&mut self.buffer).into();
+
                 self.remaining -= 1;
-                return Some(Ok(String::from_utf8_lossy(&line_bytes).into_owned()));
+
+                return Some(Ok(decode_line(line_bytes)));
             }
 
-            if let Err(e) = self.fill_chunk() {
-                return Some(Err(e));
+            if let Err(error) = self.fill_chunk() {
+                return Some(Err(error));
             }
         }
     }
+}
+
+/// Decodes a log line and removes a possible carriage return.
+///
+/// Removing `\r` supports files using `\r\n` line endings.
+fn decode_line(mut bytes: Vec<u8>) -> String {
+    if bytes.last() == Some(&b'\r') {
+        bytes.pop();
+    }
+
+    String::from_utf8_lossy(&bytes).into_owned()
 }

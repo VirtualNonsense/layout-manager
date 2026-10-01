@@ -1,237 +1,336 @@
 use ratatui::{
     prelude::{Buffer, Rect},
-    style::{Modifier, Style},
+    style::{Color, Modifier, Style},
     widgets::{Block, StatefulWidget, Widget},
 };
 
-pub struct WidgetList<'a, W: Widget + Clone> {
-    items: &'a Vec<W>,
-    item_height: u16,
-    block: Option<Block<'a>>,
+/// A widget that reports how many terminal rows it requires.
+///
+/// The height may change between render calls. This allows widgets such as
+/// expandable log entries to work inside WidgetList.
+pub trait HeightAwareWidget: Widget + Clone {
+    /// Returns the desired widget height in terminal rows.
+    ///
+    /// WidgetList treats a returned value of zero as one row.
+    fn height(&self) -> u16;
 }
-impl<'a, W: Widget + Clone> WidgetList<'a, W> {
-    pub fn new(items: &'a Vec<W>, item_height: u16) -> Self {
+
+/// A generic, selectable list of variable-height widgets.
+pub struct WidgetList<'a, W>
+where
+    W: HeightAwareWidget,
+{
+    items: &'a [W],
+    block: Option<Block<'a>>,
+    highlight_style: Style,
+    highlight_full_item: bool,
+}
+
+impl<'a, W> WidgetList<'a, W>
+where
+    W: HeightAwareWidget,
+{
+    /// Creates a widget list containing the supplied items.
+    pub const fn new(items: &'a [W]) -> Self {
         Self {
             items,
-            item_height,
             block: None,
+            highlight_style: Style::new()
+                .bg(Color::DarkGray)
+                .add_modifier(Modifier::BOLD),
+            highlight_full_item: false,
         }
     }
+
+    /// Adds an optional block around the list.
     pub fn block(mut self, block: Option<Block<'a>>) -> Self {
         self.block = block;
         self
     }
+
+    /// Sets the style used for the selected item.
+    pub const fn highlight_style(mut self, style: Style) -> Self {
+        self.highlight_style = style;
+        self
+    }
+
+    /// Controls whether selection highlighting covers the complete item.
+    ///
+    /// When false, only the first row is highlighted. This is useful for
+    /// expandable items whose additional rows contain detailed information.
+    ///
+    /// When true, every visible row belonging to the item is highlighted.
+    pub const fn highlight_full_item(mut self, highlight_full_item: bool) -> Self {
+        self.highlight_full_item = highlight_full_item;
+        self
+    }
 }
 
-/// State for a [`WidgetList`], tracking the scroll offset and current selection.
+/// State for a WidgetList.
 ///
-/// Like ratatui's own `ListState`, this keeps its fields private and exposes
-/// them through methods. The `offset` is the index of the first item that
-/// should be drawn; the widget adjusts it during rendering so that the
-/// selected item stays visible.
-///
-/// The navigation methods (`select_next`, `select_last`, etc.) take the number
-/// of items as a `len` argument, since the state itself does not know how many
-/// items the list contains.
-///
-/// # Examples
-///
-/// ```
-/// let mut state = WidgetListState::new();
-/// state.select_first(items.len());
-/// state.select_next(items.len());
-/// assert_eq!(state.selected(), Some(1));
-/// ```
+/// The state tracks the selected item and the index of the first visible item.
 #[derive(Debug, Default, Clone)]
 pub struct WidgetListState {
     /// Index of the first visible item.
     offset: usize,
-    /// Index of the currently selected item, if any.
+
+    /// Index of the selected item.
     selected: Option<usize>,
 }
 
 impl WidgetListState {
-    /// Creates a new state with no selection and a zero offset.
-    pub fn new() -> Self {
-        Self::default()
+    /// Creates a state with no selection and an offset of zero.
+    pub const fn new() -> Self {
+        Self {
+            offset: 0,
+            selected: None,
+        }
     }
 
-    // --- offset ---
-
-    /// Returns the current scroll offset (the index of the first visible item).
-    pub fn offset(&self) -> usize {
+    /// Returns the index of the first visible item.
+    pub const fn offset(&self) -> usize {
         self.offset
     }
 
-    /// Returns a mutable reference to the scroll offset.
-    ///
-    /// Prefer the navigation methods where possible; use this only when you
-    /// need to set the offset directly.
+    /// Returns a mutable reference to the current offset.
     pub fn offset_mut(&mut self) -> &mut usize {
         &mut self.offset
     }
 
-    /// Sets the scroll offset, consuming and returning `self` for chaining.
-    pub fn with_offset(mut self, offset: usize) -> Self {
+    /// Sets the offset and returns the updated state.
+    pub const fn with_offset(mut self, offset: usize) -> Self {
         self.offset = offset;
         self
     }
 
-    // --- selection ---
-
-    /// Returns the index of the selected item, or `None` if nothing is selected.
-    pub fn selected(&self) -> Option<usize> {
+    /// Returns the selected item index.
+    pub const fn selected(&self) -> Option<usize> {
         self.selected
     }
 
     /// Sets the selected item.
     ///
-    /// Passing `None` clears the selection and resets the offset to `0`,
-    /// matching ratatui's behaviour.
+    /// Clearing the selection also resets the scroll offset.
     pub fn select(&mut self, index: Option<usize>) {
         self.selected = index;
+
         if index.is_none() {
             self.offset = 0;
         }
     }
 
-    /// Sets the selected item, consuming and returning `self` for chaining.
+    /// Sets the selected item and returns the updated state.
     pub fn with_selected(mut self, index: Option<usize>) -> Self {
         self.select(index);
         self
     }
 
-    // --- navigation ---
-
-    /// Selects the next item, clamped to the last item.
-    ///
-    /// If nothing is selected, selects the first item. `len` is the number of
-    /// items in the list; if it is `0`, the selection is cleared.
+    /// Selects the next item without wrapping.
     pub fn select_next(&mut self, len: usize) {
         if len == 0 {
             self.selected = None;
+            self.offset = 0;
             return;
         }
+
         let next = match self.selected {
-            Some(i) => (i + 1).min(len - 1),
+            Some(index) => index.saturating_add(1).min(len - 1),
             None => 0,
         };
+
         self.selected = Some(next);
     }
 
-    /// Selects the previous item, clamped to the first item.
-    ///
-    /// If nothing is selected, selects the first item. `len` is the number of
-    /// items in the list; if it is `0`, the selection is cleared.
+    /// Selects the previous item without wrapping.
     pub fn select_previous(&mut self, len: usize) {
         if len == 0 {
             self.selected = None;
+            self.offset = 0;
             return;
         }
-        let prev = match self.selected {
-            Some(i) => i.saturating_sub(1),
+
+        let previous = match self.selected {
+            Some(index) => index.saturating_sub(1),
             None => 0,
         };
-        self.selected = Some(prev);
+
+        self.selected = Some(previous);
     }
 
-    /// Selects the first item, or clears the selection if the list is empty.
+    /// Selects the first item.
     pub fn select_first(&mut self, len: usize) {
         self.selected = (len > 0).then_some(0);
+
+        if len == 0 {
+            self.offset = 0;
+        }
     }
 
-    /// Selects the last item, or clears the selection if the list is empty.
+    /// Selects the final item.
     pub fn select_last(&mut self, len: usize) {
         self.selected = len.checked_sub(1);
+
+        if len == 0 {
+            self.offset = 0;
+        }
     }
 
-    /// Moves the selection down by `amount`, clamped to the last item.
-    ///
-    /// If nothing is selected, selects the first item. `len` is the number of
-    /// items in the list; if it is `0`, the selection is cleared.
+    /// Moves the selection down by the supplied number of items.
     pub fn scroll_down_by(&mut self, amount: usize, len: usize) {
         if len == 0 {
             self.selected = None;
+            self.offset = 0;
             return;
         }
+
         let next = match self.selected {
-            Some(i) => (i + amount).min(len - 1),
+            Some(index) => index.saturating_add(amount).min(len - 1),
             None => 0,
         };
+
         self.selected = Some(next);
     }
 
-    /// Moves the selection up by `amount`, clamped to the first item.
-    ///
-    /// If nothing is selected, selects the first item.
+    /// Moves the selection up by the supplied number of items.
     pub fn scroll_up_by(&mut self, amount: usize) {
-        let prev = match self.selected {
-            Some(i) => i.saturating_sub(amount),
+        let previous = match self.selected {
+            Some(index) => index.saturating_sub(amount),
             None => 0,
         };
-        self.selected = Some(prev);
+
+        self.selected = Some(previous);
+    }
+
+    /// Clears the current selection.
+    pub fn clear_selection(&mut self) {
+        self.selected = None;
+        self.offset = 0;
+    }
+
+    /// Ensures selection and offset refer to valid items.
+    fn normalize(&mut self, len: usize) {
+        if len == 0 {
+            self.selected = None;
+            self.offset = 0;
+            return;
+        }
+
+        if let Some(selected) = self.selected {
+            self.selected = Some(selected.min(len - 1));
+        }
+
+        self.offset = self.offset.min(len - 1);
     }
 }
 
-impl<'a, W: Widget + Clone> StatefulWidget for WidgetList<'a, W> {
+impl<'a, W> StatefulWidget for WidgetList<'a, W>
+where
+    W: HeightAwareWidget,
+{
     type State = WidgetListState;
 
-    fn render(self, mut area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        if let Some(block) = self.block {
+    fn render(self, mut area: Rect, buffer: &mut Buffer, state: &mut Self::State) {
+        let WidgetList {
+            items,
+            block,
+            highlight_style,
+            highlight_full_item,
+        } = self;
+
+        if let Some(block) = block {
             let inner_area = block.inner(area);
-            block.render(area, buf);
+            block.render(area, buffer);
             area = inner_area;
         }
 
-        // Guard against a zero item height (would cause div-by-zero / no progress).
-        if self.item_height == 0 || area.height == 0 {
+        if area.width == 0 || area.height == 0 {
             return;
         }
 
-        // How many items fit fully in the visible area.
-        let visible_count = (area.height / self.item_height) as usize;
-        if visible_count == 0 {
+        state.normalize(items.len());
+
+        if items.is_empty() {
             return;
         }
 
-        // Clamp offset to a valid range for the current item count.
-        let max_offset = self.items.len().saturating_sub(visible_count);
-        state.offset = state.offset.min(max_offset);
+        ensure_selection_visible(items, area.height, state);
 
-        // Adjust the offset so the selected item stays visible.
-        if let Some(selected) = state.selected {
-            let selected = selected.min(self.items.len().saturating_sub(1));
-            if selected < state.offset {
-                // selection scrolled off the top
-                state.offset = selected;
-            } else if selected >= state.offset + visible_count {
-                // selection scrolled off the bottom
-                state.offset = selected + 1 - visible_count;
-            }
-        }
-
+        let bottom = area.y.saturating_add(area.height);
         let mut y = area.y;
-        for (i, item) in self.items.iter().enumerate().skip(state.offset) {
-            // stop if we've run out of vertical room
-            if y + self.item_height > area.y + area.height {
+
+        for (index, item) in items.iter().enumerate().skip(state.offset) {
+            if y >= bottom {
                 break;
             }
+
+            let requested_height = item.height().max(1);
+            let available_height = bottom.saturating_sub(y);
+            let rendered_height = requested_height.min(available_height);
 
             let item_area = Rect {
                 x: area.x,
                 y,
                 width: area.width,
-                height: self.item_height,
+                height: rendered_height,
             };
 
-            item.clone().render(item_area, buf);
+            item.clone().render(item_area, buffer);
 
-            // Optionally highlight the selected row.
-            if Some(i) == state.selected {
-                buf.set_style(item_area, Style::default().add_modifier(Modifier::REVERSED));
+            if Some(index) == state.selected {
+                let highlight_height = if highlight_full_item {
+                    rendered_height
+                } else {
+                    rendered_height.min(1)
+                };
+
+                if highlight_height > 0 {
+                    let highlight_area = Rect {
+                        x: item_area.x,
+                        y: item_area.y,
+                        width: item_area.width,
+                        height: highlight_height,
+                    };
+
+                    buffer.set_style(highlight_area, highlight_style);
+                }
             }
 
-            y += self.item_height;
+            if rendered_height < requested_height {
+                break;
+            }
+
+            y = y.saturating_add(requested_height);
         }
+    }
+}
+
+/// Adjusts the offset so the selected item is visible.
+///
+/// Heights are accumulated dynamically because individual items may occupy
+/// different numbers of terminal rows.
+fn ensure_selection_visible<W>(items: &[W], available_height: u16, state: &mut WidgetListState)
+where
+    W: HeightAwareWidget,
+{
+    let Some(selected) = state.selected else {
+        return;
+    };
+
+    if selected < state.offset {
+        state.offset = selected;
+    }
+
+    loop {
+        let used_height = items[state.offset..=selected]
+            .iter()
+            .fold(0_u16, |height, item| {
+                height.saturating_add(item.height().max(1))
+            });
+
+        if used_height <= available_height || state.offset >= selected {
+            break;
+        }
+
+        state.offset = state.offset.saturating_add(1);
     }
 }

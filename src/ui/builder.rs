@@ -4,11 +4,16 @@
 //! instances, initial focus, and input manager — and validates the combination
 //! at [`build`](UiBuilder::build) time before constructing a [`Ui`].
 
-use crate::ui::Ui;
-use crate::ui::component::{Component, ComponentRegistry};
-use crate::ui::focus::FocusManager;
-use crate::ui::input::InputManager;
-use crate::ui::layout::{ComponentId, LayoutSpec};
+use crate::{
+    ui::Ui,
+    ui_lib::{
+        component::{Component, ComponentId},
+        component_registry::ComponentRegistry,
+        focus::FocusManager,
+        input::InputManager,
+        layout::LayoutSpec,
+    },
+};
 use color_eyre::eyre::{Result, eyre};
 use std::collections::HashSet;
 

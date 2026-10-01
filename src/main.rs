@@ -13,8 +13,9 @@ use std::io;
 
 pub mod app;
 pub mod event;
-mod log;
+pub mod log;
 pub mod ui;
+pub mod ui_lib;
 
 #[tokio::main]
 async fn main() -> color_eyre::Result<()> {

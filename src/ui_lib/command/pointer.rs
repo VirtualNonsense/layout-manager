@@ -1,8 +1,8 @@
 //! Pointer (mouse) event types and bindings.
 
-use crate::event::component::Event;
+use crate::{event::Event, new_event};
 use crossterm::event::{MouseButton as CrosstermMouseButton, MouseEvent, MouseEventKind};
-use ratatui::layout::Rect;
+use ratatui::layout::{Position, Rect};
 
 /// A mouse button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -29,25 +29,13 @@ pub enum PointerGesture {
     ScrollRight,
 }
 
-/// A pointer event with both global and component-local coordinates.
-///
-/// `local_x` / `local_y` are relative to the top-left corner of the component
-/// rect that the pointer was over.  They are `None` when the pointer was not
-/// inside any component rect at the time of the event (e.g. the cursor moved
-/// off-screen or into a gap).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct PointerEvent {
-    /// The normalised gesture that triggered this event.
-    pub gesture: PointerGesture,
-    /// Absolute terminal column.
-    pub x: u16,
-    /// Absolute terminal row.
-    pub y: u16,
-    /// Column relative to the target component's rect, or `None` if outside.
-    pub local_x: Option<u16>,
-    /// Row relative to the target component's rect, or `None` if outside.
-    pub local_y: Option<u16>,
-}
+new_event!(PointerEvent {
+    gesture: PointerGesture,
+    x: u16,
+    y: u16,
+    local_x: Option<u16>,
+    local_y: Option<u16>,
+});
 
 impl PointerEvent {
     /// Convert a crossterm [`MouseEvent`] into a [`PointerEvent`].
@@ -81,6 +69,17 @@ impl PointerEvent {
     /// Currently only `MouseDown` triggers a focus transfer.
     pub fn is_focus_event(kind: MouseEventKind) -> bool {
         matches!(kind, MouseEventKind::Down(_))
+    }
+
+    pub fn local_position(&self) -> Option<Position> {
+        if let (Some(local_x), Some(local_y)) = (self.local_x, self.local_y) {
+            return Some(Position::new(local_x, local_y));
+        }
+        None
+    }
+
+    pub fn position(&self) -> Position {
+        Position::new(self.x, self.y)
     }
 }
 

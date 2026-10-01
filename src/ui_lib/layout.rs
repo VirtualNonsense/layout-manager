@@ -5,15 +5,9 @@
 //! Calling [`compute`](LayoutSpec::compute) walks the tree against a concrete
 //! terminal [`Rect`] and produces a flat [`Vec<LaidOutRegion>`] that the
 //! renderer can iterate directly.
+use crate::ui_lib::component::ComponentId;
 
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use uuid::Uuid;
-
-/// Unique identifier for a component instance or a focus slot.
-///
-/// A [`Uuid`] is used so IDs can be generated at component construction time
-/// without any central registry.
-pub type ComponentId = Uuid;
 
 /// A node in the layout tree.
 ///
